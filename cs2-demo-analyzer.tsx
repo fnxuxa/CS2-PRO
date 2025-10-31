@@ -1,27 +1,299 @@
-import React, { useState, useEffect } from 'react';
-import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair } from 'lucide-react';
+
+type View = 'landing' | 'upload-area' | 'select-analysis' | 'processing' | 'results';
+type Trend = 'up' | 'down' | 'neutral';
+type AnalysisType = 'player' | 'team' | null;
+
+interface UploadedDemo {
+  name: string;
+  sizeMB: number;
+}
+
+interface ChatMessage {
+  role: 'user' | 'ai';
+  text: string;
+}
+
+interface MetricCard {
+  label: string;
+  value: string;
+  description: string;
+  trend: Trend;
+}
+
+interface RadarPlayer {
+  name: string;
+  role: 't' | 'ct';
+  x: number;
+  y: number;
+  action: string;
+}
+
+interface RadarMoment {
+  tick: number;
+  clock: string;
+  phase: 'início' | 'meio' | 'final';
+  callout: string;
+  highlight: string;
+  players: RadarPlayer[];
+}
+
+interface RoundHighlight {
+  round: number;
+  result: string;
+  detail: string;
+}
+
+interface HeatmapHotspot {
+  zone: string;
+  pressure: 'Alta' | 'Média' | 'Baixa';
+  note: string;
+}
+
+interface EconomyStats {
+  averageSpend: number;
+  economyStrength: string;
+  swings: string[];
+}
+
+interface AnalysisData {
+  type: 'player' | 'team';
+  map: string;
+  duration: string;
+  rounds: number;
+  mvp: string;
+  rating?: number;
+  score?: string;
+  summary: string;
+  keyFindings: string[];
+  heatmapUrl: string;
+  heatmapSummary: string;
+  heatmapHotspots: HeatmapHotspot[];
+  playerMetrics?: MetricCard[];
+  teamMetrics?: MetricCard[];
+  radarMoments: RadarMoment[];
+  roundHighlights: RoundHighlight[];
+  recommendations: string[];
+  economy: EconomyStats;
+}
+
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  size: number;
+  duration: number;
+  delay: number;
+}
+
+const PARTICLE_COUNT = 30;
+
+const createParticles = (): Particle[] => (
+  Array.from({ length: PARTICLE_COUNT }, (_, i) => ({
+    id: i,
+    x: Math.random() * 100,
+    y: Math.random() * 100,
+    size: Math.random() * 3 + 1,
+    duration: Math.random() * 15 + 10,
+    delay: Math.random() * 5,
+  }))
+);
+
+const buildMockAnalysis = (type: 'player' | 'team'): AnalysisData => {
+  if (type === 'player') {
+    return {
+      type,
+      map: 'de_ancient',
+      duration: '47:23',
+      rounds: 28,
+      mvp: 'dev1ce',
+      rating: 1.35,
+      summary: 'Desempenho excepcional com 28 kills, 68.5% HS rate e ADR de 87.3. Controle de spray preciso, timings agressivos em A Main e conversões críticas em retakes.',
+      keyFindings: [
+        'Dominou a região A Main em 78% dos rounds CT, garantindo vantagem numérica cedo.',
+        'Converteu 4 de 5 situações de clutch em rounds decisivos, salvando economia dupla.',
+        'Gerou 31 HP de dano utilitário por round — acima da média Pro League (+12).',
+      ],
+      heatmapUrl: 'https://i.imgur.com/3MoH8wl.png',
+      heatmapSummary: 'Concentração alta na transição A Main → A Site. Movimentação em “L” para contestar Default e apoiar retakes pelo CT Spawn.',
+      heatmapHotspots: [
+        { zone: 'A Main', pressure: 'Alta', note: '68% das eliminações iniciais vieram desta região.' },
+        { zone: 'Canal B', pressure: 'Média', note: 'Utilizada apenas em rounds de rotação (14% do tempo).' },
+        { zone: 'CT Spawn', pressure: 'Alta', note: 'Posicionamento seguro pós-plant com cobertura cruzada.' },
+      ],
+      playerMetrics: [
+        { label: 'HS%', value: '68.5%', description: 'Top 5% ESL Pro League', trend: 'up' },
+        { label: 'ADR', value: '87.3', description: '+12 vs média global', trend: 'up' },
+        { label: 'Clutch', value: '80%', description: '4 clutches convertidos', trend: 'up' },
+        { label: 'Utility', value: '17.8s', description: 'Tempo médio de cegueira gerada', trend: 'up' },
+      ],
+      radarMoments: [
+        {
+          tick: 12450,
+          clock: '1:17',
+          phase: 'meio',
+          callout: 'A Main',
+          highlight: 'Avanço sincronizado gera double kill abrindo espaço para retake.',
+          players: [
+            { name: 'dev1ce', role: 'ct', x: 0.63, y: 0.41, action: 'peek dry' },
+            { name: 'blameF', role: 'ct', x: 0.58, y: 0.39, action: 'trade instantâneo' },
+            { name: 'cadiaN', role: 't', x: 0.66, y: 0.45, action: 'entry frag' },
+            { name: 'jabbi', role: 't', x: 0.69, y: 0.46, action: 'flash suporte' },
+          ],
+        },
+        {
+          tick: 18740,
+          clock: '0:28',
+          phase: 'final',
+          callout: 'Bomb A',
+          highlight: 'Post-plant em triângulo impede defuse: crossfire perfeito com AWPer.',
+          players: [
+            { name: 'dev1ce', role: 't', x: 0.52, y: 0.33, action: 'cover default' },
+            { name: 'device', role: 't', x: 0.49, y: 0.36, action: 'smoke line-up' },
+            { name: 'k0nfig', role: 'ct', x: 0.54, y: 0.28, action: 'mola para defuse' },
+            { name: 'stavn', role: 'ct', x: 0.57, y: 0.32, action: 'swing late' },
+          ],
+        },
+      ],
+      roundHighlights: [
+        { round: 8, result: 'Clutch 1v3', detail: 'Spray transfer em Stairs seguido de defuse com 1.4s restantes.' },
+        { round: 14, result: 'Triple kill de MP9', detail: 'Domínio A Main eco forçado garante reset econômico.' },
+        { round: 22, result: 'Assistência decisiva', detail: 'Flash pop em B garante entry dupla para fechar mapa.' },
+      ],
+      recommendations: [
+        'Trabalhar pré-aim nos retakes B: 5 mortes seguidas entrando pelo CT Spawn contra lurkers.',
+        'Ajustar cadência de granadas defensivas: média de 28s — antecipar quando os T jogam default lento.',
+        'Rever posicionamentos pós-plant no bomb A: 3 rounds perdidos com vantagem numérica.',
+      ],
+      economy: {
+        averageSpend: 4275,
+        economyStrength: 'Alto controle econômico, sem resets duplos durante o lado CT.',
+        swings: [
+          'Round 10: eco forçada convertida graças ao clutch 1v2.',
+          'Round 21: clutch 1v3 salvou arma e evitou reset total.',
+        ],
+      },
+    };
+  }
+
+  return {
+    type,
+    map: 'de_ancient',
+    duration: '47:23',
+    rounds: 28,
+    mvp: 'Team Liquid',
+    score: '16-12',
+    summary: 'Time demonstrou coordenação econômica eficiente, controle dominante de espaços e mid-round calls sólidos para virar o placar de 6-9 para 16-12.',
+    keyFindings: [
+      'Controle de meio garantido em 71% dos rounds Terrorista com execução smoke wall consistente.',
+      'Tempo médio de trade-kill em 2.7s — acima do benchmark tier-1 (3.5s).',
+      'Retakes B venceram 60% das tentativas graças a utility coordenada.',
+    ],
+    heatmapUrl: 'https://i.imgur.com/o7kVv7Z.png',
+    heatmapSummary: 'Pressão constante na região de Meio para dividir atenção CT e isolar duelos em A. Defesa forte no retake B com crossfires complexos.',
+    heatmapHotspots: [
+      { zone: 'Meio Superior', pressure: 'Alta', note: 'Executado em 18 de 28 rounds.' },
+      { zone: 'Bomb B', pressure: 'Alta', note: 'Pós-plant com 3 camadas de cobertura.' },
+      { zone: 'A Main', pressure: 'Média', note: 'Usado como lurk atrasado por YEKINDAR.' },
+    ],
+    teamMetrics: [
+      { label: 'Trade Kill', value: '2.7s', description: 'Tempo médio de resposta', trend: 'up' },
+      { label: 'Execuções', value: '78%', description: 'Sucesso em executes preparados', trend: 'up' },
+      { label: 'Retakes', value: '60%', description: 'Vitórias em situações desfavoráveis', trend: 'up' },
+      { label: 'First Kill', value: '+6', description: 'Saldo de entry frags no mapa', trend: 'up' },
+    ],
+    radarMoments: [
+      {
+        tick: 11320,
+        clock: '1:24',
+        phase: 'início',
+        callout: 'Meio',
+        highlight: 'Execução smoke wall abre caminho para controle de Conector em 7 segundos.',
+        players: [
+          { name: 'YEKINDAR', role: 't', x: 0.61, y: 0.46, action: 'entry dry' },
+          { name: 'NAF', role: 't', x: 0.58, y: 0.49, action: 'mola deep' },
+          { name: 'Rain', role: 'ct', x: 0.64, y: 0.38, action: 'fogo recuo' },
+          { name: 'Broky', role: 'ct', x: 0.67, y: 0.35, action: 'AWP hold' },
+        ],
+      },
+      {
+        tick: 19840,
+        clock: '0:21',
+        phase: 'final',
+        callout: 'Bomb B',
+        highlight: 'Retake CT com dupla flash e molotov forcejando os T para o aberto.',
+        players: [
+          { name: 'oSee', role: 'ct', x: 0.47, y: 0.27, action: 'flash retake' },
+          { name: 'EliGE', role: 'ct', x: 0.51, y: 0.29, action: 'spray control' },
+          { name: 'Twistzz', role: 't', x: 0.45, y: 0.32, action: 'cover default' },
+          { name: 'Ropz', role: 't', x: 0.42, y: 0.34, action: 'lurk stairs' },
+        ],
+      },
+    ],
+    roundHighlights: [
+      { round: 5, result: 'Força CT vence', detail: 'Stack em B com crossfire perfeito neutraliza execução rápida.' },
+      { round: 13, result: 'Execução A sem perdas', detail: 'Utilidade sincronizada remove ângulos CT em 9 segundos.' },
+      { round: 24, result: 'Retake 3x5 convertido', detail: 'Uso duplo de HE em default garante defuse com 1.9s.' },
+    ],
+    recommendations: [
+      'Refinar resposta a execuções rápidas no bomb B — 4 derrotas consecutivas sem contestação inicial.',
+      'Melhorar coordenação de utility no pós-plant: flashes atrasadas custaram 2 rounds apertados.',
+      'Desenhar mid-round calls alternativas quando perder controle de meio para evitar previsibilidade.',
+    ],
+    economy: {
+      averageSpend: 3950,
+      economyStrength: 'Gestão sólida — apenas um reset econômico profundo em 28 rounds.',
+      swings: [
+        'Round 7: força T conectada com SG, garantindo vantagem econômica até o fim do half.',
+        'Round 20: call de full save permitiu dupla AWP nos rounds finais.',
+      ],
+    },
+  };
+};
+
+const simulateAnalysis = (type: 'player' | 'team'): Promise<AnalysisData> =>
+  new Promise((resolve) => {
+    const duration = 3600 + Math.random() * 1500;
+    setTimeout(() => resolve(buildMockAnalysis(type)), duration);
+  });
+
+const trendCopy: Record<Trend, { label: string; color: string; icon: string }> = {
+  up: { label: 'Acima da média', color: 'text-green-400', icon: '▲' },
+  down: { label: 'Abaixo da média', color: 'text-red-400', icon: '▼' },
+  neutral: { label: 'Estável', color: 'text-gray-400', icon: '▪' },
+};
+
+const trendBadgeClasses: Record<Trend, string> = {
+  up: 'bg-green-500/15 border-green-500/40 text-green-300',
+  down: 'bg-red-500/15 border-red-500/40 text-red-300',
+  neutral: 'bg-gray-700/60 border-gray-600 text-gray-300',
+};
+
+const pressureBadgeClasses: Record<HeatmapHotspot['pressure'], string> = {
+  Alta: 'bg-red-500/10 border-red-500/30 text-red-300',
+  Média: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
+  Baixa: 'bg-blue-500/10 border-blue-500/30 text-blue-300',
+};
 
 const CS2ProAnalyzerApp = () => {
-  const [currentPage, setCurrentPage] = useState('landing');
-  const [uploadedDemo, setUploadedDemo] = useState(null);
-  const [analysisType, setAnalysisType] = useState(null);
+  const [currentPage, setCurrentPage] = useState<View>('landing');
+  const [uploadedDemo, setUploadedDemo] = useState<UploadedDemo | null>(null);
+  const [analysisType, setAnalysisType] = useState<AnalysisType>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [analysis, setAnalysis] = useState(null);
-  const [chatMessages, setChatMessages] = useState([]);
+  const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
-  const [particles, setParticles] = useState([]);
+  const [particles, setParticles] = useState<Particle[]>(createParticles);
   const [progress, setProgress] = useState(0);
 
+  const metrics = useMemo<MetricCard[]>(() => {
+    if (!analysis) return [];
+    return analysis.playerMetrics ?? analysis.teamMetrics ?? [];
+  }, [analysis]);
+
   useEffect(() => {
-    const newParticles = Array.from({ length: 30 }, (_, i) => ({
-      id: i,
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-      size: Math.random() * 3 + 1,
-      duration: Math.random() * 15 + 10,
-      delay: Math.random() * 5
-    }));
-    setParticles(newParticles);
+    setParticles(createParticles());
   }, []);
 
   useEffect(() => {
@@ -34,76 +306,195 @@ const CS2ProAnalyzerApp = () => {
           }
           return prev + 2;
         });
-      }, 50);
+      }, 60);
       return () => clearInterval(interval);
     }
   }, [isProcessing]);
 
-  const handleUpload = (e) => {
-    const file = e.target.files[0];
+  useEffect(() => {
+    if (!uploadedDemo) {
+      setAnalysis(null);
+      setAnalysisType(null);
+      setChatMessages([]);
+    }
+  }, [uploadedDemo]);
+
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    setUploadedDemo({ name: file.name, size: (file.size / 1024 / 1024).toFixed(2) });
+
+    const sizeMB = parseFloat((file.size / 1024 / 1024).toFixed(2));
+    setUploadedDemo({ name: file.name, sizeMB });
+    setAnalysis(null);
+    setAnalysisType(null);
+    setChatMessages([]);
+    setCurrentPage('upload-area');
   };
 
-  const handleChatSubmit = (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    
-    const newMessages = [...chatMessages, { role: 'user', text: chatInput }];
-    setChatMessages(newMessages);
-    
-    setTimeout(() => {
-      let aiResponse = '';
-      const query = chatInput.toLowerCase();
-      
-      if (query.includes('demo') || query.includes('arquivo')) {
-        aiResponse = `📁 **RUSH aqui!** Upload detectado:\n\n✅ Arquivo: ${uploadedDemo?.name}\n✅ Tamanho: ${uploadedDemo?.size}MB\n\n🎯 Posso começar a análise agora? Escolha:\n• Digite "player" para análise individual\n• Digite "team" para análise de time`;
-      } else if (query.includes('player') || query.includes('jogador')) {
-        aiResponse = `⚡ **Iniciando análise INDIVIDUAL!**\n\nVou processar:\n• K/D, HS%, ADR, Rating 2.0\n• Posicionamento e heatmaps\n• Clutches e utility usage\n\n🔥 Aguarde o processamento...`;
-        setTimeout(() => {
-          setAnalysisType('player');
-          setCurrentPage('select-analysis');
-        }, 2000);
-      } else if (query.includes('team') || query.includes('time')) {
-        aiResponse = `🏆 **Iniciando análise de TIME!**\n\nVou analisar:\n• Economia e controle de sites\n• Trade kills e coordenação\n• Rotações e estratégias\n\n⚡ Aguarde...`;
-        setTimeout(() => {
-          setAnalysisType('team');
-          setCurrentPage('select-analysis');
-        }, 2000);
-      } else if (query.includes('ajuda') || query.includes('help')) {
-        aiResponse = `💬 **RUSH - Seu assistente de análise**\n\n📌 Comandos:\n• "Como funciona?" - Entenda o processo\n• "player" - Análise individual\n• "team" - Análise de time\n• "status" - Ver progresso\n\nFaça upload de uma demo .dem! 🚀`;
-      } else {
-        aiResponse = `🤖 **RUSH aqui!**\n\nRecebi: "${chatInput}"\n\n${uploadedDemo ? `✅ Demo carregada: ${uploadedDemo.name}\n\nDigite "player" ou "team" para começar!` : '❌ Nenhuma demo carregada.\n\nClique no botão UPLOAD acima!'}`;
+  const generateRushResponse = (message: string): string => {
+    const lower = message.toLowerCase();
+
+    if (!uploadedDemo) {
+      return '❌ Nenhuma demo carregada. Clique em **UPLOAD** para enviar um arquivo .dem e destravar a análise.';
+    }
+
+    if (lower.includes('status')) {
+      if (isProcessing) {
+        const stage = progress < 30
+          ? 'fazendo parsing inicial'
+          : progress < 60
+            ? 'extraindo eventos-chave'
+            : progress < 90
+              ? 'calculando estatísticas avançadas'
+              : 'gerando relatório final com IA';
+        return `⏱️ Processando **${uploadedDemo.name}** • ${progress}% completo.\n\nEtapa atual: ${stage}.`;
       }
-      
-      setChatMessages([...newMessages, { role: 'ai', text: aiResponse }]);
-    }, 800);
-    
-    setChatInput('');
+
+      if (analysis) {
+        const mode = analysis.type === 'player' ? 'Análise individual pronta! ✅' : 'Análise de time pronta! ✅';
+        return `${mode}\nAbra a seção de resultados para revisar heatmap, radar e recomendações personalizadas.`;
+      }
+
+      if (!analysisType) {
+        return '📥 Demo carregada, aguardando você escolher o foco: digite **"player"** ou **"team"** para começar a processar.';
+      }
+
+      return '🚦 Análise ainda não iniciada. Clique no cartão correspondente ou peça "start" para começar o processamento.';
+    }
+
+    if (lower.includes('ajuda') || lower.includes('help')) {
+      return '💬 **RUSH - coach IA**\n\nComandos úteis:\n• "player" ou "team" → escolher foco da análise\n• "status" → verificar progresso\n• "heatmap", "radar", "economia", "recomendações" → detalhes após a análise\n• "como funciona" → ver o fluxo completo';
+    }
+
+    if (!analysis && !isProcessing) {
+      if (lower.includes('como funciona') || lower.includes('funciona')) {
+        return '📌 Fluxo: 1) Faça upload da demo. 2) Escolha análise **player** ou **team**. 3) IA processa eventos, gera heatmap e radar 2D. 4) RUSH responde com insights, gráficos e plano de treino.';
+      }
+
+      if (lower.includes('player') || lower.includes('jogador')) {
+        return '⚡ Perfeito! Preparei o modo **Análise Individual**. Clique no cartão correspondente para iniciar quando quiser.';
+      }
+
+      if (lower.includes('team') || lower.includes('time')) {
+        return '🏆 Vamos analisar a equipe inteira. Clique no cartão **Análise de Time** para começar o processamento.';
+      }
+    }
+
+    if (analysis) {
+      if (lower.includes('heatmap')) {
+        const hotspots = analysis.heatmapHotspots
+          .map(zone => `• ${zone.zone}: ${zone.note}`)
+          .join('\n');
+        return `🔥 Heatmap pronto!\n\n${analysis.heatmapSummary}\n\nHotspots relevantes:\n${hotspots}`;
+      }
+
+      if (lower.includes('radar') || lower.includes('rotac') || lower.includes('replay')) {
+        const moment = analysis.radarMoments[0];
+        if (moment) {
+          const players = moment.players
+            .map(player => `• ${player.name} (${player.role.toUpperCase()}): ${player.action}`)
+            .join('\n');
+          return `🗺️ Radar 2D destaca: ${moment.highlight}\n\nCallout: ${moment.callout} • Tempo: ${moment.clock}\n${players}`;
+        }
+      }
+
+      if (lower.includes('econom')) {
+        const swings = analysis.economy.swings.map(item => `• ${item}`).join('\n');
+        return `💰 Economia sob controle: gasto médio **$${analysis.economy.averageSpend.toLocaleString('pt-BR')}**. ${analysis.economy.economyStrength}\n\nPontos-chave:\n${swings}`;
+      }
+
+      if (lower.includes('recom') || lower.includes('melhor') || lower.includes('improve')) {
+        const recs = analysis.recommendations.map(item => `• ${item}`).join('\n');
+        return `🎯 Prioridades de treino:\n${recs}`;
+      }
+
+      if (lower.includes('round')) {
+        const highlight = analysis.roundHighlights[0];
+        if (highlight) {
+          return `📆 Round ${highlight.round}: ${highlight.result}\n${highlight.detail}`;
+        }
+      }
+
+      const findings = analysis.keyFindings.map(item => `• ${item}`).join('\n');
+      return `📊 Resumo rápido:\n${analysis.summary}\n\nPrincipais achados:\n${findings}`;
+    }
+
+    if (isProcessing) {
+      return `🚀 Ainda processando **${uploadedDemo.name}**. Progresso atual: ${progress}%. Vou avisar quando terminar!`;
+    }
+
+    if (lower.includes('player') || lower.includes('jogador')) {
+      return '⚡ Modo jogador selecionado. Vá para a próxima tela e inicie a análise quando estiver pronto.';
+    }
+
+    if (lower.includes('team') || lower.includes('time')) {
+      return '🏆 Modo time configurado. É só iniciar a análise para ver coordenação, economia e execuções.';
+    }
+
+    if (lower.includes('demo') || lower.includes('arquivo')) {
+      return `📁 Upload detectado:\n✅ Arquivo: ${uploadedDemo.name}\n✅ Tamanho: ${uploadedDemo.sizeMB}MB\n\nAgora escolha **"player"** ou **"team"**.`;
+    }
+
+    return `🤖 RUSH aqui! Demo carregada: **${uploadedDemo.name}** (${uploadedDemo.sizeMB}MB).\nDigite **"player"** ou **"team"** para começarmos, ou pergunte "como funciona" para saber mais.`;
   };
 
-  const startAnalysis = (type) => {
+  const handleChatSubmit = (
+    event?:
+      | React.FormEvent<HTMLFormElement>
+      | React.MouseEvent<HTMLButtonElement>
+      | React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    event?.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const message = chatInput.trim();
+    const lower = message.toLowerCase();
+
+    setChatMessages(prev => [...prev, { role: 'user', text: message }]);
+    setChatInput('');
+
+    if ((lower.includes('player') || lower.includes('jogador')) && uploadedDemo) {
+      setTimeout(() => {
+        setAnalysisType('player');
+        setCurrentPage('select-analysis');
+      }, 400);
+    }
+
+    if ((lower.includes('team') || lower.includes('time')) && uploadedDemo) {
+      setTimeout(() => {
+        setAnalysisType('team');
+        setCurrentPage('select-analysis');
+      }, 400);
+    }
+
+    const response = generateRushResponse(message);
+    setTimeout(() => {
+      setChatMessages(prev => [...prev, { role: 'ai', text: response }]);
+    }, 500);
+  };
+
+  const startAnalysis = async (type: 'player' | 'team') => {
     setAnalysisType(type);
     setIsProcessing(true);
     setProgress(0);
+    setAnalysis(null);
     setCurrentPage('processing');
-    
-    setTimeout(() => {
-      setIsProcessing(false);
-      setAnalysis({
-        type,
-        map: 'de_ancient',
-        duration: '47:23',
-        rounds: 28,
-        mvp: type === 'player' ? 'dev1ce' : 'Team Liquid',
-        rating: type === 'player' ? 1.35 : null,
-        score: type === 'team' ? '16-12' : null,
-        summary: type === 'player' 
-          ? 'Desempenho excepcional com 28 kills, 68.5% HS rate e ADR de 87.3. Controle de spray superior e posicionamento tático acima da média pro-level.'
-          : 'Time demonstrou coordenação econômica eficiente (média $1732/round) e controle dominante de sites. Vitória por execução superior e rotações cronometradas.'
-      });
+
+    try {
+      const result = await simulateAnalysis(type);
+      setAnalysis(result);
+      setProgress(100);
       setCurrentPage('results');
-    }, 5000);
+    } catch (error) {
+      console.error(error);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: '⚠️ Ocorreu um erro ao processar a demo. Tente novamente em instantes.' }
+      ]);
+      setCurrentPage('upload-area');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // ==================== LANDING PAGE ====================
@@ -476,7 +867,7 @@ const CS2ProAnalyzerApp = () => {
                     <div className="flex items-center justify-center gap-3">
                       <Check className="w-6 h-6 text-green-400" />
                       <span className="text-white font-bold">{uploadedDemo.name}</span>
-                      <span className="text-gray-400">({uploadedDemo.size}MB)</span>
+                      <span className="text-gray-400">({uploadedDemo.sizeMB}MB)</span>
                     </div>
                   </div>
                 )}
@@ -542,7 +933,11 @@ const CS2ProAnalyzerApp = () => {
                       type="text"
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit(e)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          handleChatSubmit(e);
+                        }
+                      }}
                       placeholder="Digite sua mensagem para RUSH..."
                       className="flex-1 bg-black text-white border border-gray-700 focus:border-orange-500 rounded-xl px-5 py-3 focus:outline-none transition-all placeholder-gray-500"
                     />
@@ -670,54 +1065,237 @@ const CS2ProAnalyzerApp = () => {
             </p>
           </div>
 
-          {/* MVP/Winner Card */}
-          <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-12 mb-10 shadow-2xl shadow-orange-500/30 glow-orange">
-            <div className="flex items-start gap-6">
-              <Award className="w-20 h-20 text-orange-500 flex-shrink-0" />
-              <div className="flex-1">
-                <h3 className="text-3xl font-bold text-white mb-4">
-                  {analysisType === 'player' ? 'MVP da Partida' : 'Time Vencedor'}
-                </h3>
-                <p className="text-6xl font-black text-white mb-6">{analysis.mvp}</p>
-                {analysis.rating && (
-                  <div className="flex items-baseline gap-3 mb-4">
-                    <span className="text-gray-300 text-xl">Rating 2.0:</span>
-                    <span className="text-5xl font-black text-green-400">{analysis.rating}</span>
-                    <span className="text-sm text-gray-500">(Pro avg: 1.0)</span>
+          {/* Overview Cards */}
+          <div className="grid lg:grid-cols-2 gap-8 mb-10">
+            <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-10 shadow-2xl shadow-orange-500/30 glow-orange">
+              <div className="flex items-center gap-4 mb-6">
+                <Award className="w-16 h-16 text-orange-500" />
+                <div>
+                  <h3 className="text-3xl font-bold text-white">
+                    {analysis.type === 'player' ? 'MVP da Partida' : 'Equipe em Destaque'}
+                  </h3>
+                  <p className="text-xs uppercase tracking-[0.35em] text-orange-200 mt-1">
+                    {analysis.map.toUpperCase()} • {analysis.duration}
+                  </p>
+                </div>
+              </div>
+              <p className="text-5xl font-black text-white mb-4">{analysis.mvp}</p>
+              <p className="text-gray-100 leading-relaxed mb-6">{analysis.summary}</p>
+              <div className="grid grid-cols-2 gap-4 text-gray-200">
+                <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3">
+                  <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Rounds</p>
+                  <p className="text-xl font-bold text-white">{analysis.rounds}</p>
+                </div>
+                {analysis.score && (
+                  <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3">
+                    <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Placar Final</p>
+                    <p className="text-xl font-bold text-green-400">{analysis.score}</p>
                   </div>
                 )}
-                {analysis.score && (
-                  <p className="text-5xl font-black text-green-400">{analysis.score}</p>
+                {analysis.rating && (
+                  <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3 col-span-2">
+                    <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Rating 2.0</p>
+                    <p className="text-3xl font-black text-green-400">{analysis.rating}</p>
+                  </div>
                 )}
+              </div>
+            </div>
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <TrendingUp className="w-10 h-10 text-blue-400" />
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Principais Achados</h3>
+                  <p className="text-sm text-gray-400">Insights priorizados pela IA</p>
+                </div>
+              </div>
+              <ul className="space-y-4">
+                {analysis.keyFindings.map((finding, index) => (
+                  <li key={index} className="flex items-start gap-3">
+                    <span className="text-orange-500 text-2xl leading-none">•</span>
+                    <p className="text-gray-200 leading-relaxed">{finding}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {metrics.length > 0 && (
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-10 mb-10">
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-3xl font-bold text-white">Métricas-Chave</h3>
+                  <p className="text-sm text-gray-400">
+                    {analysis.type === 'player' ? 'Performance individual' : 'Sinergia de equipe'}
+                  </p>
+                </div>
+                <div className="w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/30">
+                  <BarChart3 className="w-7 h-7 text-black" />
+                </div>
+              </div>
+              <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
+                {metrics.map((metric, index) => {
+                  const trend = trendCopy[metric.trend];
+                  return (
+                    <div
+                      key={index}
+                      className="bg-black/60 border border-gray-800 hover:border-orange-500/40 rounded-2xl p-6 transition-all duration-300"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-lg font-bold text-white">{metric.label}</h4>
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-semibold px-3 py-1 rounded-full border ${trendBadgeClasses[metric.trend]}`}
+                        >
+                          {trend.icon} {trend.label}
+                        </span>
+                      </div>
+                      <p className="text-4xl font-black text-orange-500 mb-2">{metric.value}</p>
+                      <p className="text-sm text-gray-400 leading-relaxed">{metric.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="grid lg:grid-cols-[2fr,1fr] gap-8 mb-10">
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Heatmap &amp; Posicionamento</h3>
+                  <p className="text-sm text-gray-400">Mapa {analysis.map}</p>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+                  <Flame className="w-6 h-6 text-black" />
+                </div>
+              </div>
+              <div className="relative rounded-2xl overflow-hidden h-72 mb-6">
+                <img
+                  src={analysis.heatmapUrl}
+                  alt={`Heatmap ${analysis.map}`}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute top-4 left-4 bg-black/60 text-orange-300 px-3 py-1 rounded-full text-xs uppercase tracking-[0.35em]">
+                  Heatmap
+                </div>
+              </div>
+              <p className="text-gray-300 leading-relaxed">{analysis.heatmapSummary}</p>
+            </div>
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Crosshair className="w-7 h-7 text-orange-400" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Hotspots Prioritários</h3>
+                  <p className="text-sm text-gray-400">Zonas que pedem revisão</p>
+                </div>
+              </div>
+              <ul className="space-y-4">
+                {analysis.heatmapHotspots.map((hotspot, index) => (
+                  <li key={index} className="bg-black/40 border border-gray-800 rounded-2xl px-4 py-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-white font-bold">{hotspot.zone}</span>
+                      <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${pressureBadgeClasses[hotspot.pressure]}`}>
+                        {hotspot.pressure}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-300 mt-2 leading-relaxed">{hotspot.note}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-8 mb-10">
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Compass className="w-7 h-7 text-cyan-400" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Radar &amp; Rotação</h3>
+                  <p className="text-sm text-gray-400">Momentos chave do mapa</p>
+                </div>
+              </div>
+              <div className="space-y-5">
+                {analysis.radarMoments.map(moment => (
+                  <div key={moment.tick} className="bg-black/40 border border-gray-800 rounded-2xl p-5">
+                    <div className="flex items-center justify-between text-xs text-gray-400 uppercase tracking-[0.3em] mb-3">
+                      <span>{moment.clock}</span>
+                      <span>{moment.callout}</span>
+                    </div>
+                    <p className="text-white font-semibold mb-4">{moment.highlight}</p>
+                    <div className="grid sm:grid-cols-2 gap-3 text-sm text-gray-300">
+                      {moment.players.map(player => (
+                        <div key={`${moment.tick}-${player.name}`} className="flex items-center gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-full ${player.role === 'ct' ? 'bg-blue-400' : 'bg-orange-400'}`}></span>
+                          <span className="font-semibold text-white">{player.name}</span>
+                          <span className="text-gray-500">•</span>
+                          <span className="text-gray-400">{player.action}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Zap className="w-7 h-7 text-yellow-300" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Rounds Decisivos</h3>
+                  <p className="text-sm text-gray-400">Lances que mudaram o jogo</p>
+                </div>
+              </div>
+              <div className="space-y-5">
+                {analysis.roundHighlights.map(highlight => (
+                  <div key={highlight.round} className="flex items-start gap-4 bg-black/40 border border-gray-800 rounded-2xl p-4">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center text-black font-black text-lg shadow-lg shadow-orange-500/30">
+                      R{highlight.round}
+                    </div>
+                    <div>
+                      <p className="text-white font-bold text-lg mb-1">{highlight.result}</p>
+                      <p className="text-sm text-gray-300 leading-relaxed">{highlight.detail}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* Analysis Summary */}
-          <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-10 mb-10">
-            <div className="flex items-start gap-6">
-              <TrendingUp className="w-16 h-16 text-blue-400 flex-shrink-0" />
-              <div>
-                <h3 className="text-3xl font-bold text-white mb-6">Análise da IA</h3>
-                <p className="text-gray-300 leading-relaxed text-xl mb-8">{analysis.summary}</p>
-                
-                {analysisType === 'player' && (
-                  <div className="grid grid-cols-3 gap-6">
-                    <div className="bg-black rounded-xl p-6 text-center border-2 border-orange-500/30">
-                      <p className="text-4xl font-black text-orange-500 mb-2">68.5%</p>
-                      <p className="text-sm text-gray-500">HS Rate</p>
-                    </div>
-                    <div className="bg-black rounded-xl p-6 text-center border-2 border-green-500/30">
-                      <p className="text-4xl font-black text-green-400 mb-2">87.3</p>
-                      <p className="text-sm text-gray-500">ADR</p>
-                    </div>
-                    <div className="bg-black rounded-xl p-6 text-center border-2 border-blue-500/30">
-                      <p className="text-4xl font-black text-blue-400 mb-2">76.4%</p>
-                      <p className="text-sm text-gray-500">KAST</p>
-                    </div>
-                  </div>
-                )}
+          <div className="grid lg:grid-cols-2 gap-8 mb-12">
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <BarChart3 className="w-7 h-7 text-green-300" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Economia</h3>
+                  <p className="text-sm text-gray-400">Fluxo financeiro ao longo do mapa</p>
+                </div>
               </div>
+              <p className="text-xs uppercase tracking-[0.35em] text-gray-500 mb-2">Gasto médio</p>
+              <p className="text-4xl font-black text-white mb-4">${analysis.economy.averageSpend.toLocaleString('pt-BR')}</p>
+              <p className="text-gray-300 leading-relaxed">{analysis.economy.economyStrength}</p>
+              <div className="mt-6 space-y-3">
+                {analysis.economy.swings.map((swing, index) => (
+                  <div key={index} className="flex items-start gap-3 text-gray-300">
+                    <span className="text-orange-400 font-bold mt-1">•</span>
+                    <p className="leading-relaxed">{swing}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-orange-500/15 via-orange-600/10 to-orange-500/15 border-2 border-orange-500/40 rounded-3xl p-8 shadow-2xl shadow-orange-500/20">
+              <div className="flex items-center gap-3 mb-6">
+                <Sparkles className="w-7 h-7 text-orange-200" />
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Plano de Ação RUSH</h3>
+                  <p className="text-sm text-orange-100">Foque nessas melhorias primeiro</p>
+                </div>
+              </div>
+              <ul className="space-y-4 text-gray-100">
+                {analysis.recommendations.map((rec, index) => (
+                  <li key={index} className="flex items-start gap-3">
+                    <span className="text-orange-300 font-black">{index + 1}.</span>
+                    <p className="leading-relaxed">{rec}</p>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
 
