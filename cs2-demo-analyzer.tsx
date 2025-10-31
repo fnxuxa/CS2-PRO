@@ -1,27 +1,157 @@
-import React, { useState, useEffect } from 'react';
-import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair } from 'lucide-react';
+
+type View = 'landing' | 'upload-area' | 'select-analysis' | 'processing' | 'results';
+type Trend = 'up' | 'down' | 'neutral';
+type AnalysisType = 'player' | 'team' | null;
+
+interface UploadedDemo {
+  id: string;
+  name: string;
+  sizeMB: number;
+}
+
+interface ChatMessage {
+  role: 'user' | 'ai';
+  text: string;
+}
+
+interface MetricCard {
+  label: string;
+  value: string;
+  description: string;
+  trend: Trend;
+}
+
+interface RadarPlayer {
+  name: string;
+  role: 't' | 'ct';
+  x: number;
+  y: number;
+  action: string;
+}
+
+interface RadarMoment {
+  tick: number;
+  clock: string;
+  phase: 'início' | 'meio' | 'final';
+  callout: string;
+  highlight: string;
+  players: RadarPlayer[];
+}
+
+interface RoundHighlight {
+  round: number;
+  result: string;
+  detail: string;
+}
+
+interface HeatmapHotspot {
+  zone: string;
+  pressure: 'Alta' | 'Média' | 'Baixa';
+  note: string;
+}
+
+interface EconomyStats {
+  averageSpend: number;
+  economyStrength: string;
+  swings: string[];
+}
+
+interface AnalysisData {
+  type: 'player' | 'team';
+  map: string;
+  duration: string;
+  rounds: number;
+  mvp: string;
+  rating?: number;
+  score?: string;
+  summary: string;
+  keyFindings: string[];
+  heatmapUrl: string;
+  heatmapSummary: string;
+  heatmapHotspots: HeatmapHotspot[];
+  playerMetrics?: MetricCard[];
+  teamMetrics?: MetricCard[];
+  radarMoments: RadarMoment[];
+  roundHighlights: RoundHighlight[];
+  recommendations: string[];
+  economy: EconomyStats;
+}
+
+type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+type JobLifecycleStatus = JobStatus | 'idle';
+
+interface JobStatusResponse {
+  jobId: string;
+  status: JobStatus;
+  progress: number;
+  error?: string;
+}
+
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  size: number;
+  duration: number;
+  delay: number;
+}
+
+const PARTICLE_COUNT = 30;
+
+const createParticles = (): Particle[] => (
+  Array.from({ length: PARTICLE_COUNT }, (_, i) => ({
+    id: i,
+    x: Math.random() * 100,
+    y: Math.random() * 100,
+    size: Math.random() * 3 + 1,
+    duration: Math.random() * 15 + 10,
+    delay: Math.random() * 5,
+  }))
+);
+
+const trendCopy: Record<Trend, { label: string; color: string; icon: string }> = {
+  up: { label: 'Acima da média', color: 'text-green-400', icon: '▲' },
+  down: { label: 'Abaixo da média', color: 'text-red-400', icon: '▼' },
+  neutral: { label: 'Estável', color: 'text-gray-400', icon: '▪' },
+};
+
+const trendBadgeClasses: Record<Trend, string> = {
+  up: 'bg-green-500/15 border-green-500/40 text-green-300',
+  down: 'bg-red-500/15 border-red-500/40 text-red-300',
+  neutral: 'bg-gray-700/60 border-gray-600 text-gray-300',
+};
+
+const pressureBadgeClasses: Record<HeatmapHotspot['pressure'], string> = {
+  Alta: 'bg-red-500/10 border-red-500/30 text-red-300',
+  Média: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
+  Baixa: 'bg-blue-500/10 border-blue-500/30 text-blue-300',
+};
+
+const API_BASE_URL = 'http://localhost:4000';
 
 const CS2ProAnalyzerApp = () => {
-  const [currentPage, setCurrentPage] = useState('landing');
-  const [uploadedDemo, setUploadedDemo] = useState(null);
-  const [analysisType, setAnalysisType] = useState(null);
+  const [currentPage, setCurrentPage] = useState<View>('landing');
+  const [uploadedDemo, setUploadedDemo] = useState<UploadedDemo | null>(null);
+  const [analysisType, setAnalysisType] = useState<AnalysisType>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [analysis, setAnalysis] = useState(null);
-  const [chatMessages, setChatMessages] = useState([]);
+  const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
-  const [particles, setParticles] = useState([]);
+  const [particles, setParticles] = useState<Particle[]>(createParticles);
   const [progress, setProgress] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<JobLifecycleStatus>('idle');
+  const [jobError, setJobError] = useState<string | null>(null);
+
+  const metrics = useMemo<MetricCard[]>(() => {
+    if (!analysis) return [];
+    return analysis.playerMetrics ?? analysis.teamMetrics ?? [];
+  }, [analysis]);
 
   useEffect(() => {
-    const newParticles = Array.from({ length: 30 }, (_, i) => ({
-      id: i,
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-      size: Math.random() * 3 + 1,
-      duration: Math.random() * 15 + 10,
-      delay: Math.random() * 5
-    }));
-    setParticles(newParticles);
+    setParticles(createParticles());
   }, []);
 
   useEffect(() => {
@@ -34,77 +164,236 @@ const CS2ProAnalyzerApp = () => {
           }
           return prev + 2;
         });
-      }, 50);
+      }, 60);
       return () => clearInterval(interval);
     }
   }, [isProcessing]);
 
-  const handleUpload = (e) => {
-    const file = e.target.files[0];
+  useEffect(() => {
+    if (!uploadedDemo) {
+      setAnalysis(null);
+      setAnalysisType(null);
+      setChatMessages([]);
+      setActiveJobId(null);
+      setJobStatus('idle');
+      setProgress(0);
+      setJobError(null);
+    }
+  }, [uploadedDemo]);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    setUploadedDemo({ name: file.name, size: (file.size / 1024 / 1024).toFixed(2) });
-  };
 
-  const handleChatSubmit = (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    
-    const newMessages = [...chatMessages, { role: 'user', text: chatInput }];
-    setChatMessages(newMessages);
-    
-    setTimeout(() => {
-      let aiResponse = '';
-      const query = chatInput.toLowerCase();
-      
-      if (query.includes('demo') || query.includes('arquivo')) {
-        aiResponse = `📁 **RUSH aqui!** Upload detectado:\n\n✅ Arquivo: ${uploadedDemo?.name}\n✅ Tamanho: ${uploadedDemo?.size}MB\n\n🎯 Posso começar a análise agora? Escolha:\n• Digite "player" para análise individual\n• Digite "team" para análise de time`;
-      } else if (query.includes('player') || query.includes('jogador')) {
-        aiResponse = `⚡ **Iniciando análise INDIVIDUAL!**\n\nVou processar:\n• K/D, HS%, ADR, Rating 2.0\n• Posicionamento e heatmaps\n• Clutches e utility usage\n\n🔥 Aguarde o processamento...`;
-        setTimeout(() => {
-          setAnalysisType('player');
-          setCurrentPage('select-analysis');
-        }, 2000);
-      } else if (query.includes('team') || query.includes('time')) {
-        aiResponse = `🏆 **Iniciando análise de TIME!**\n\nVou analisar:\n• Economia e controle de sites\n• Trade kills e coordenação\n• Rotações e estratégias\n\n⚡ Aguarde...`;
-        setTimeout(() => {
-          setAnalysisType('team');
-          setCurrentPage('select-analysis');
-        }, 2000);
-      } else if (query.includes('ajuda') || query.includes('help')) {
-        aiResponse = `💬 **RUSH - Seu assistente de análise**\n\n📌 Comandos:\n• "Como funciona?" - Entenda o processo\n• "player" - Análise individual\n• "team" - Análise de time\n• "status" - Ver progresso\n\nFaça upload de uma demo .dem! 🚀`;
-      } else {
-        aiResponse = `🤖 **RUSH aqui!**\n\nRecebi: "${chatInput}"\n\n${uploadedDemo ? `✅ Demo carregada: ${uploadedDemo.name}\n\nDigite "player" ou "team" para começar!` : '❌ Nenhuma demo carregada.\n\nClique no botão UPLOAD acima!'}`;
+    const formData = new FormData();
+    formData.append('demo', file);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Falha ao enviar a demo.');
       }
-      
-      setChatMessages([...newMessages, { role: 'ai', text: aiResponse }]);
-    }, 800);
-    
-    setChatInput('');
+
+      const uploaded: UploadedDemo = {
+        id: payload.id,
+        name: payload.name,
+        sizeMB: payload.sizeMB,
+      };
+
+      setUploadedDemo(uploaded);
+      setChatMessages([
+        {
+          role: 'ai',
+          text: `📁 Demo **${uploaded.name}** recebida (${uploaded.sizeMB}MB).
+Digite **"player"** ou **"team"** para iniciar a análise!`,
+        },
+      ]);
+      setJobStatus('queued');
+      setCurrentPage('upload-area');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro inesperado no upload.';
+      setJobError(message);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: `⚠️ Não consegui enviar a demo: ${message}` },
+      ]);
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const startAnalysis = (type) => {
+  const handleChatSubmit = async (
+    event?:
+      | React.FormEvent<HTMLFormElement>
+      | React.MouseEvent<HTMLButtonElement>
+      | React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    event?.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const message = chatInput.trim();
+    setChatMessages(prev => [...prev, { role: 'user', text: message }]);
+    setChatInput('');
+
+    const lower = message.toLowerCase();
+
+    if ((lower.includes('player') || lower.includes('jogador')) && uploadedDemo) {
+      setAnalysisType('player');
+      setCurrentPage('select-analysis');
+    }
+
+    if ((lower.includes('team') || lower.includes('time')) && uploadedDemo) {
+      setAnalysisType('team');
+      setCurrentPage('select-analysis');
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/rush`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          uploadId: uploadedDemo?.id ?? null,
+          jobId: activeJobId,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Falha ao receber resposta da RUSH.');
+      }
+
+      setChatMessages(prev => [...prev, { role: 'ai', text: payload.reply }]);
+    } catch (error) {
+      const messageError = error instanceof Error ? error.message : 'Erro inesperado na conversa.';
+      setChatMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${messageError}` }]);
+    }
+  };
+
+  const startAnalysis = async (type: 'player' | 'team') => {
+    if (!uploadedDemo) {
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: '⚠️ Faça upload de uma demo antes de iniciar a análise.' },
+      ]);
+      return;
+    }
+
     setAnalysisType(type);
     setIsProcessing(true);
     setProgress(0);
+    setAnalysis(null);
+    setJobError(null);
     setCurrentPage('processing');
-    
-    setTimeout(() => {
-      setIsProcessing(false);
-      setAnalysis({
-        type,
-        map: 'de_ancient',
-        duration: '47:23',
-        rounds: 28,
-        mvp: type === 'player' ? 'dev1ce' : 'Team Liquid',
-        rating: type === 'player' ? 1.35 : null,
-        score: type === 'team' ? '16-12' : null,
-        summary: type === 'player' 
-          ? 'Desempenho excepcional com 28 kills, 68.5% HS rate e ADR de 87.3. Controle de spray superior e posicionamento tático acima da média pro-level.'
-          : 'Time demonstrou coordenação econômica eficiente (média $1732/round) e controle dominante de sites. Vitória por execução superior e rotações cronometradas.'
+    setJobStatus('processing');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/analysis/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadId: uploadedDemo.id, type }),
       });
-      setCurrentPage('results');
-    }, 5000);
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Falha ao iniciar a análise.');
+      }
+
+      setActiveJobId(payload.jobId);
+      setJobStatus(payload.status ?? 'processing');
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: '⚙️ Iniciei a análise. Vou avisar quando terminar!' },
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro inesperado ao iniciar a análise.';
+      setJobError(message);
+      setIsProcessing(false);
+      setJobStatus('idle');
+      setCurrentPage('select-analysis');
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: `⚠️ ${message}` },
+      ]);
+    }
   };
+
+  useEffect(() => {
+    if (!isProcessing || !activeJobId) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/analysis/${activeJobId}/status`);
+        const payload: JobStatusResponse & { error?: string } = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? 'Falha ao consultar o status do job.');
+        }
+
+        if (cancelled) return;
+
+        setProgress(payload.progress);
+        setJobStatus(payload.status);
+
+        if (payload.status === 'failed') {
+          const errorMessage = payload.error ?? 'Análise falhou.';
+          setIsProcessing(false);
+          setJobError(errorMessage);
+          setCurrentPage('select-analysis');
+          setChatMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${errorMessage}` }]);
+          return;
+        }
+
+        if (payload.status === 'completed') {
+          const resultResponse = await fetch(`${API_BASE_URL}/analysis/${activeJobId}/result`);
+          const resultPayload = await resultResponse.json();
+
+          if (!resultResponse.ok) {
+            throw new Error(resultPayload.error ?? 'Falha ao recuperar o relatório.');
+          }
+
+          if (cancelled) return;
+
+          setAnalysis(resultPayload.analysis as AnalysisData);
+          setIsProcessing(false);
+          setProgress(100);
+          setCurrentPage('results');
+          setChatMessages(prev => [...prev, { role: 'ai', text: '✅ Análise concluída! Confira os resultados completos.' }]);
+          return;
+        }
+
+        timeoutId = setTimeout(fetchStatus, 1500);
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : 'Erro ao monitorar o job.';
+        setJobError(message);
+        setIsProcessing(false);
+        setJobStatus('idle');
+        setCurrentPage('select-analysis');
+        setChatMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${message}` }]);
+      }
+    };
+
+    fetchStatus();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isProcessing, activeJobId]);
 
   // ==================== LANDING PAGE ====================
   if (currentPage === 'landing') {
@@ -476,8 +765,14 @@ const CS2ProAnalyzerApp = () => {
                     <div className="flex items-center justify-center gap-3">
                       <Check className="w-6 h-6 text-green-400" />
                       <span className="text-white font-bold">{uploadedDemo.name}</span>
-                      <span className="text-gray-400">({uploadedDemo.size}MB)</span>
+                      <span className="text-gray-400">({uploadedDemo.sizeMB}MB)</span>
                     </div>
+                  </div>
+                )}
+
+                {jobError && (
+                  <div className="mt-6 text-sm text-red-400 font-semibold">
+                    {jobError}
                   </div>
                 )}
               </div>
@@ -542,7 +837,11 @@ const CS2ProAnalyzerApp = () => {
                       type="text"
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit(e)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          handleChatSubmit(e);
+                        }
+                      }}
                       placeholder="Digite sua mensagem para RUSH..."
                       className="flex-1 bg-black text-white border border-gray-700 focus:border-orange-500 rounded-xl px-5 py-3 focus:outline-none transition-all placeholder-gray-500"
                     />
@@ -570,6 +869,11 @@ const CS2ProAnalyzerApp = () => {
           <h2 className="text-5xl font-black text-white text-center mb-4">
             Escolha o Tipo de <span className="text-orange-500">Análise</span>
           </h2>
+          {jobError && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-200 text-sm px-4 py-3 rounded-2xl mb-10 text-center">
+              {jobError}
+            </div>
+          )}
           <p className="text-center text-gray-400 mb-12 text-xl">
             Demo: <span className="text-white font-semibold">{uploadedDemo?.name}</span>
           </p>
@@ -615,6 +919,15 @@ const CS2ProAnalyzerApp = () => {
           <h3 className="text-4xl font-black text-white mb-6">Processando Demo</h3>
           <p className="text-gray-400 mb-10 text-xl">
             IA analisando <span className="text-orange-500 font-bold">{uploadedDemo?.name}</span>
+          </p>
+          <p className="text-sm text-gray-500 mb-8 uppercase tracking-[0.3em]">
+            Status: {
+              jobStatus === 'idle' ? 'Aguardando' :
+              jobStatus === 'queued' ? 'Na fila' :
+              jobStatus === 'processing' ? 'Processando' :
+              jobStatus === 'completed' ? 'Concluído' :
+              'Falhou'
+            }
           </p>
           
           <div className="bg-black rounded-full h-4 overflow-hidden mb-10 shadow-inner">
@@ -670,54 +983,237 @@ const CS2ProAnalyzerApp = () => {
             </p>
           </div>
 
-          {/* MVP/Winner Card */}
-          <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-12 mb-10 shadow-2xl shadow-orange-500/30 glow-orange">
-            <div className="flex items-start gap-6">
-              <Award className="w-20 h-20 text-orange-500 flex-shrink-0" />
-              <div className="flex-1">
-                <h3 className="text-3xl font-bold text-white mb-4">
-                  {analysisType === 'player' ? 'MVP da Partida' : 'Time Vencedor'}
-                </h3>
-                <p className="text-6xl font-black text-white mb-6">{analysis.mvp}</p>
-                {analysis.rating && (
-                  <div className="flex items-baseline gap-3 mb-4">
-                    <span className="text-gray-300 text-xl">Rating 2.0:</span>
-                    <span className="text-5xl font-black text-green-400">{analysis.rating}</span>
-                    <span className="text-sm text-gray-500">(Pro avg: 1.0)</span>
+          {/* Overview Cards */}
+          <div className="grid lg:grid-cols-2 gap-8 mb-10">
+            <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-10 shadow-2xl shadow-orange-500/30 glow-orange">
+              <div className="flex items-center gap-4 mb-6">
+                <Award className="w-16 h-16 text-orange-500" />
+                <div>
+                  <h3 className="text-3xl font-bold text-white">
+                    {analysis.type === 'player' ? 'MVP da Partida' : 'Equipe em Destaque'}
+                  </h3>
+                  <p className="text-xs uppercase tracking-[0.35em] text-orange-200 mt-1">
+                    {analysis.map.toUpperCase()} • {analysis.duration}
+                  </p>
+                </div>
+              </div>
+              <p className="text-5xl font-black text-white mb-4">{analysis.mvp}</p>
+              <p className="text-gray-100 leading-relaxed mb-6">{analysis.summary}</p>
+              <div className="grid grid-cols-2 gap-4 text-gray-200">
+                <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3">
+                  <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Rounds</p>
+                  <p className="text-xl font-bold text-white">{analysis.rounds}</p>
+                </div>
+                {analysis.score && (
+                  <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3">
+                    <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Placar Final</p>
+                    <p className="text-xl font-bold text-green-400">{analysis.score}</p>
                   </div>
                 )}
-                {analysis.score && (
-                  <p className="text-5xl font-black text-green-400">{analysis.score}</p>
+                {analysis.rating && (
+                  <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3 col-span-2">
+                    <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Rating 2.0</p>
+                    <p className="text-3xl font-black text-green-400">{analysis.rating}</p>
+                  </div>
                 )}
+              </div>
+            </div>
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <TrendingUp className="w-10 h-10 text-blue-400" />
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Principais Achados</h3>
+                  <p className="text-sm text-gray-400">Insights priorizados pela IA</p>
+                </div>
+              </div>
+              <ul className="space-y-4">
+                {analysis.keyFindings.map((finding, index) => (
+                  <li key={index} className="flex items-start gap-3">
+                    <span className="text-orange-500 text-2xl leading-none">•</span>
+                    <p className="text-gray-200 leading-relaxed">{finding}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {metrics.length > 0 && (
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-10 mb-10">
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-3xl font-bold text-white">Métricas-Chave</h3>
+                  <p className="text-sm text-gray-400">
+                    {analysis.type === 'player' ? 'Performance individual' : 'Sinergia de equipe'}
+                  </p>
+                </div>
+                <div className="w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/30">
+                  <BarChart3 className="w-7 h-7 text-black" />
+                </div>
+              </div>
+              <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
+                {metrics.map((metric, index) => {
+                  const trend = trendCopy[metric.trend];
+                  return (
+                    <div
+                      key={index}
+                      className="bg-black/60 border border-gray-800 hover:border-orange-500/40 rounded-2xl p-6 transition-all duration-300"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-lg font-bold text-white">{metric.label}</h4>
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-semibold px-3 py-1 rounded-full border ${trendBadgeClasses[metric.trend]}`}
+                        >
+                          {trend.icon} {trend.label}
+                        </span>
+                      </div>
+                      <p className="text-4xl font-black text-orange-500 mb-2">{metric.value}</p>
+                      <p className="text-sm text-gray-400 leading-relaxed">{metric.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="grid lg:grid-cols-[2fr,1fr] gap-8 mb-10">
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Heatmap &amp; Posicionamento</h3>
+                  <p className="text-sm text-gray-400">Mapa {analysis.map}</p>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+                  <Flame className="w-6 h-6 text-black" />
+                </div>
+              </div>
+              <div className="relative rounded-2xl overflow-hidden h-72 mb-6">
+                <img
+                  src={analysis.heatmapUrl}
+                  alt={`Heatmap ${analysis.map}`}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute top-4 left-4 bg-black/60 text-orange-300 px-3 py-1 rounded-full text-xs uppercase tracking-[0.35em]">
+                  Heatmap
+                </div>
+              </div>
+              <p className="text-gray-300 leading-relaxed">{analysis.heatmapSummary}</p>
+            </div>
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Crosshair className="w-7 h-7 text-orange-400" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Hotspots Prioritários</h3>
+                  <p className="text-sm text-gray-400">Zonas que pedem revisão</p>
+                </div>
+              </div>
+              <ul className="space-y-4">
+                {analysis.heatmapHotspots.map((hotspot, index) => (
+                  <li key={index} className="bg-black/40 border border-gray-800 rounded-2xl px-4 py-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-white font-bold">{hotspot.zone}</span>
+                      <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${pressureBadgeClasses[hotspot.pressure]}`}>
+                        {hotspot.pressure}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-300 mt-2 leading-relaxed">{hotspot.note}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-8 mb-10">
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Compass className="w-7 h-7 text-cyan-400" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Radar &amp; Rotação</h3>
+                  <p className="text-sm text-gray-400">Momentos chave do mapa</p>
+                </div>
+              </div>
+              <div className="space-y-5">
+                {analysis.radarMoments.map(moment => (
+                  <div key={moment.tick} className="bg-black/40 border border-gray-800 rounded-2xl p-5">
+                    <div className="flex items-center justify-between text-xs text-gray-400 uppercase tracking-[0.3em] mb-3">
+                      <span>{moment.clock}</span>
+                      <span>{moment.callout}</span>
+                    </div>
+                    <p className="text-white font-semibold mb-4">{moment.highlight}</p>
+                    <div className="grid sm:grid-cols-2 gap-3 text-sm text-gray-300">
+                      {moment.players.map(player => (
+                        <div key={`${moment.tick}-${player.name}`} className="flex items-center gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-full ${player.role === 'ct' ? 'bg-blue-400' : 'bg-orange-400'}`}></span>
+                          <span className="font-semibold text-white">{player.name}</span>
+                          <span className="text-gray-500">•</span>
+                          <span className="text-gray-400">{player.action}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Zap className="w-7 h-7 text-yellow-300" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Rounds Decisivos</h3>
+                  <p className="text-sm text-gray-400">Lances que mudaram o jogo</p>
+                </div>
+              </div>
+              <div className="space-y-5">
+                {analysis.roundHighlights.map(highlight => (
+                  <div key={highlight.round} className="flex items-start gap-4 bg-black/40 border border-gray-800 rounded-2xl p-4">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center text-black font-black text-lg shadow-lg shadow-orange-500/30">
+                      R{highlight.round}
+                    </div>
+                    <div>
+                      <p className="text-white font-bold text-lg mb-1">{highlight.result}</p>
+                      <p className="text-sm text-gray-300 leading-relaxed">{highlight.detail}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* Analysis Summary */}
-          <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-10 mb-10">
-            <div className="flex items-start gap-6">
-              <TrendingUp className="w-16 h-16 text-blue-400 flex-shrink-0" />
-              <div>
-                <h3 className="text-3xl font-bold text-white mb-6">Análise da IA</h3>
-                <p className="text-gray-300 leading-relaxed text-xl mb-8">{analysis.summary}</p>
-                
-                {analysisType === 'player' && (
-                  <div className="grid grid-cols-3 gap-6">
-                    <div className="bg-black rounded-xl p-6 text-center border-2 border-orange-500/30">
-                      <p className="text-4xl font-black text-orange-500 mb-2">68.5%</p>
-                      <p className="text-sm text-gray-500">HS Rate</p>
-                    </div>
-                    <div className="bg-black rounded-xl p-6 text-center border-2 border-green-500/30">
-                      <p className="text-4xl font-black text-green-400 mb-2">87.3</p>
-                      <p className="text-sm text-gray-500">ADR</p>
-                    </div>
-                    <div className="bg-black rounded-xl p-6 text-center border-2 border-blue-500/30">
-                      <p className="text-4xl font-black text-blue-400 mb-2">76.4%</p>
-                      <p className="text-sm text-gray-500">KAST</p>
-                    </div>
-                  </div>
-                )}
+          <div className="grid lg:grid-cols-2 gap-8 mb-12">
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <BarChart3 className="w-7 h-7 text-green-300" />
+                <div>
+                  <h3 className="text-xl font-bold text-white">Economia</h3>
+                  <p className="text-sm text-gray-400">Fluxo financeiro ao longo do mapa</p>
+                </div>
               </div>
+              <p className="text-xs uppercase tracking-[0.35em] text-gray-500 mb-2">Gasto médio</p>
+              <p className="text-4xl font-black text-white mb-4">${analysis.economy.averageSpend.toLocaleString('pt-BR')}</p>
+              <p className="text-gray-300 leading-relaxed">{analysis.economy.economyStrength}</p>
+              <div className="mt-6 space-y-3">
+                {analysis.economy.swings.map((swing, index) => (
+                  <div key={index} className="flex items-start gap-3 text-gray-300">
+                    <span className="text-orange-400 font-bold mt-1">•</span>
+                    <p className="leading-relaxed">{swing}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-orange-500/15 via-orange-600/10 to-orange-500/15 border-2 border-orange-500/40 rounded-3xl p-8 shadow-2xl shadow-orange-500/20">
+              <div className="flex items-center gap-3 mb-6">
+                <Sparkles className="w-7 h-7 text-orange-200" />
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Plano de Ação RUSH</h3>
+                  <p className="text-sm text-orange-100">Foque nessas melhorias primeiro</p>
+                </div>
+              </div>
+              <ul className="space-y-4 text-gray-100">
+                {analysis.recommendations.map((rec, index) => (
+                  <li key={index} className="flex items-start gap-3">
+                    <span className="text-orange-300 font-black">{index + 1}.</span>
+                    <p className="leading-relaxed">{rec}</p>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
 
