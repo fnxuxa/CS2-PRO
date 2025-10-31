@@ -6,6 +6,7 @@ type Trend = 'up' | 'down' | 'neutral';
 type AnalysisType = 'player' | 'team' | null;
 
 interface UploadedDemo {
+  id: string;
   name: string;
   sizeMB: number;
 }
@@ -78,6 +79,16 @@ interface AnalysisData {
   economy: EconomyStats;
 }
 
+type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+type JobLifecycleStatus = JobStatus | 'idle';
+
+interface JobStatusResponse {
+  jobId: string;
+  status: JobStatus;
+  progress: number;
+  error?: string;
+}
+
 interface Particle {
   id: number;
   x: number;
@@ -100,164 +111,6 @@ const createParticles = (): Particle[] => (
   }))
 );
 
-const buildMockAnalysis = (type: 'player' | 'team'): AnalysisData => {
-  if (type === 'player') {
-    return {
-      type,
-      map: 'de_ancient',
-      duration: '47:23',
-      rounds: 28,
-      mvp: 'dev1ce',
-      rating: 1.35,
-      summary: 'Desempenho excepcional com 28 kills, 68.5% HS rate e ADR de 87.3. Controle de spray preciso, timings agressivos em A Main e conversões críticas em retakes.',
-      keyFindings: [
-        'Dominou a região A Main em 78% dos rounds CT, garantindo vantagem numérica cedo.',
-        'Converteu 4 de 5 situações de clutch em rounds decisivos, salvando economia dupla.',
-        'Gerou 31 HP de dano utilitário por round — acima da média Pro League (+12).',
-      ],
-      heatmapUrl: 'https://i.imgur.com/3MoH8wl.png',
-      heatmapSummary: 'Concentração alta na transição A Main → A Site. Movimentação em “L” para contestar Default e apoiar retakes pelo CT Spawn.',
-      heatmapHotspots: [
-        { zone: 'A Main', pressure: 'Alta', note: '68% das eliminações iniciais vieram desta região.' },
-        { zone: 'Canal B', pressure: 'Média', note: 'Utilizada apenas em rounds de rotação (14% do tempo).' },
-        { zone: 'CT Spawn', pressure: 'Alta', note: 'Posicionamento seguro pós-plant com cobertura cruzada.' },
-      ],
-      playerMetrics: [
-        { label: 'HS%', value: '68.5%', description: 'Top 5% ESL Pro League', trend: 'up' },
-        { label: 'ADR', value: '87.3', description: '+12 vs média global', trend: 'up' },
-        { label: 'Clutch', value: '80%', description: '4 clutches convertidos', trend: 'up' },
-        { label: 'Utility', value: '17.8s', description: 'Tempo médio de cegueira gerada', trend: 'up' },
-      ],
-      radarMoments: [
-        {
-          tick: 12450,
-          clock: '1:17',
-          phase: 'meio',
-          callout: 'A Main',
-          highlight: 'Avanço sincronizado gera double kill abrindo espaço para retake.',
-          players: [
-            { name: 'dev1ce', role: 'ct', x: 0.63, y: 0.41, action: 'peek dry' },
-            { name: 'blameF', role: 'ct', x: 0.58, y: 0.39, action: 'trade instantâneo' },
-            { name: 'cadiaN', role: 't', x: 0.66, y: 0.45, action: 'entry frag' },
-            { name: 'jabbi', role: 't', x: 0.69, y: 0.46, action: 'flash suporte' },
-          ],
-        },
-        {
-          tick: 18740,
-          clock: '0:28',
-          phase: 'final',
-          callout: 'Bomb A',
-          highlight: 'Post-plant em triângulo impede defuse: crossfire perfeito com AWPer.',
-          players: [
-            { name: 'dev1ce', role: 't', x: 0.52, y: 0.33, action: 'cover default' },
-            { name: 'device', role: 't', x: 0.49, y: 0.36, action: 'smoke line-up' },
-            { name: 'k0nfig', role: 'ct', x: 0.54, y: 0.28, action: 'mola para defuse' },
-            { name: 'stavn', role: 'ct', x: 0.57, y: 0.32, action: 'swing late' },
-          ],
-        },
-      ],
-      roundHighlights: [
-        { round: 8, result: 'Clutch 1v3', detail: 'Spray transfer em Stairs seguido de defuse com 1.4s restantes.' },
-        { round: 14, result: 'Triple kill de MP9', detail: 'Domínio A Main eco forçado garante reset econômico.' },
-        { round: 22, result: 'Assistência decisiva', detail: 'Flash pop em B garante entry dupla para fechar mapa.' },
-      ],
-      recommendations: [
-        'Trabalhar pré-aim nos retakes B: 5 mortes seguidas entrando pelo CT Spawn contra lurkers.',
-        'Ajustar cadência de granadas defensivas: média de 28s — antecipar quando os T jogam default lento.',
-        'Rever posicionamentos pós-plant no bomb A: 3 rounds perdidos com vantagem numérica.',
-      ],
-      economy: {
-        averageSpend: 4275,
-        economyStrength: 'Alto controle econômico, sem resets duplos durante o lado CT.',
-        swings: [
-          'Round 10: eco forçada convertida graças ao clutch 1v2.',
-          'Round 21: clutch 1v3 salvou arma e evitou reset total.',
-        ],
-      },
-    };
-  }
-
-  return {
-    type,
-    map: 'de_ancient',
-    duration: '47:23',
-    rounds: 28,
-    mvp: 'Team Liquid',
-    score: '16-12',
-    summary: 'Time demonstrou coordenação econômica eficiente, controle dominante de espaços e mid-round calls sólidos para virar o placar de 6-9 para 16-12.',
-    keyFindings: [
-      'Controle de meio garantido em 71% dos rounds Terrorista com execução smoke wall consistente.',
-      'Tempo médio de trade-kill em 2.7s — acima do benchmark tier-1 (3.5s).',
-      'Retakes B venceram 60% das tentativas graças a utility coordenada.',
-    ],
-    heatmapUrl: 'https://i.imgur.com/o7kVv7Z.png',
-    heatmapSummary: 'Pressão constante na região de Meio para dividir atenção CT e isolar duelos em A. Defesa forte no retake B com crossfires complexos.',
-    heatmapHotspots: [
-      { zone: 'Meio Superior', pressure: 'Alta', note: 'Executado em 18 de 28 rounds.' },
-      { zone: 'Bomb B', pressure: 'Alta', note: 'Pós-plant com 3 camadas de cobertura.' },
-      { zone: 'A Main', pressure: 'Média', note: 'Usado como lurk atrasado por YEKINDAR.' },
-    ],
-    teamMetrics: [
-      { label: 'Trade Kill', value: '2.7s', description: 'Tempo médio de resposta', trend: 'up' },
-      { label: 'Execuções', value: '78%', description: 'Sucesso em executes preparados', trend: 'up' },
-      { label: 'Retakes', value: '60%', description: 'Vitórias em situações desfavoráveis', trend: 'up' },
-      { label: 'First Kill', value: '+6', description: 'Saldo de entry frags no mapa', trend: 'up' },
-    ],
-    radarMoments: [
-      {
-        tick: 11320,
-        clock: '1:24',
-        phase: 'início',
-        callout: 'Meio',
-        highlight: 'Execução smoke wall abre caminho para controle de Conector em 7 segundos.',
-        players: [
-          { name: 'YEKINDAR', role: 't', x: 0.61, y: 0.46, action: 'entry dry' },
-          { name: 'NAF', role: 't', x: 0.58, y: 0.49, action: 'mola deep' },
-          { name: 'Rain', role: 'ct', x: 0.64, y: 0.38, action: 'fogo recuo' },
-          { name: 'Broky', role: 'ct', x: 0.67, y: 0.35, action: 'AWP hold' },
-        ],
-      },
-      {
-        tick: 19840,
-        clock: '0:21',
-        phase: 'final',
-        callout: 'Bomb B',
-        highlight: 'Retake CT com dupla flash e molotov forcejando os T para o aberto.',
-        players: [
-          { name: 'oSee', role: 'ct', x: 0.47, y: 0.27, action: 'flash retake' },
-          { name: 'EliGE', role: 'ct', x: 0.51, y: 0.29, action: 'spray control' },
-          { name: 'Twistzz', role: 't', x: 0.45, y: 0.32, action: 'cover default' },
-          { name: 'Ropz', role: 't', x: 0.42, y: 0.34, action: 'lurk stairs' },
-        ],
-      },
-    ],
-    roundHighlights: [
-      { round: 5, result: 'Força CT vence', detail: 'Stack em B com crossfire perfeito neutraliza execução rápida.' },
-      { round: 13, result: 'Execução A sem perdas', detail: 'Utilidade sincronizada remove ângulos CT em 9 segundos.' },
-      { round: 24, result: 'Retake 3x5 convertido', detail: 'Uso duplo de HE em default garante defuse com 1.9s.' },
-    ],
-    recommendations: [
-      'Refinar resposta a execuções rápidas no bomb B — 4 derrotas consecutivas sem contestação inicial.',
-      'Melhorar coordenação de utility no pós-plant: flashes atrasadas custaram 2 rounds apertados.',
-      'Desenhar mid-round calls alternativas quando perder controle de meio para evitar previsibilidade.',
-    ],
-    economy: {
-      averageSpend: 3950,
-      economyStrength: 'Gestão sólida — apenas um reset econômico profundo em 28 rounds.',
-      swings: [
-        'Round 7: força T conectada com SG, garantindo vantagem econômica até o fim do half.',
-        'Round 20: call de full save permitiu dupla AWP nos rounds finais.',
-      ],
-    },
-  };
-};
-
-const simulateAnalysis = (type: 'player' | 'team'): Promise<AnalysisData> =>
-  new Promise((resolve) => {
-    const duration = 3600 + Math.random() * 1500;
-    setTimeout(() => resolve(buildMockAnalysis(type)), duration);
-  });
-
 const trendCopy: Record<Trend, { label: string; color: string; icon: string }> = {
   up: { label: 'Acima da média', color: 'text-green-400', icon: '▲' },
   down: { label: 'Abaixo da média', color: 'text-red-400', icon: '▼' },
@@ -276,6 +129,8 @@ const pressureBadgeClasses: Record<HeatmapHotspot['pressure'], string> = {
   Baixa: 'bg-blue-500/10 border-blue-500/30 text-blue-300',
 };
 
+const API_BASE_URL = 'http://localhost:4000';
+
 const CS2ProAnalyzerApp = () => {
   const [currentPage, setCurrentPage] = useState<View>('landing');
   const [uploadedDemo, setUploadedDemo] = useState<UploadedDemo | null>(null);
@@ -286,6 +141,9 @@ const CS2ProAnalyzerApp = () => {
   const [chatInput, setChatInput] = useState('');
   const [particles, setParticles] = useState<Particle[]>(createParticles);
   const [progress, setProgress] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<JobLifecycleStatus>('idle');
+  const [jobError, setJobError] = useState<string | null>(null);
 
   const metrics = useMemo<MetricCard[]>(() => {
     if (!analysis) return [];
@@ -316,129 +174,61 @@ const CS2ProAnalyzerApp = () => {
       setAnalysis(null);
       setAnalysisType(null);
       setChatMessages([]);
+      setActiveJobId(null);
+      setJobStatus('idle');
+      setProgress(0);
+      setJobError(null);
     }
   }, [uploadedDemo]);
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const sizeMB = parseFloat((file.size / 1024 / 1024).toFixed(2));
-    setUploadedDemo({ name: file.name, sizeMB });
-    setAnalysis(null);
-    setAnalysisType(null);
-    setChatMessages([]);
-    setCurrentPage('upload-area');
+    const formData = new FormData();
+    formData.append('demo', file);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Falha ao enviar a demo.');
+      }
+
+      const uploaded: UploadedDemo = {
+        id: payload.id,
+        name: payload.name,
+        sizeMB: payload.sizeMB,
+      };
+
+      setUploadedDemo(uploaded);
+      setChatMessages([
+        {
+          role: 'ai',
+          text: `📁 Demo **${uploaded.name}** recebida (${uploaded.sizeMB}MB).
+Digite **"player"** ou **"team"** para iniciar a análise!`,
+        },
+      ]);
+      setJobStatus('queued');
+      setCurrentPage('upload-area');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro inesperado no upload.';
+      setJobError(message);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: `⚠️ Não consegui enviar a demo: ${message}` },
+      ]);
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const generateRushResponse = (message: string): string => {
-    const lower = message.toLowerCase();
-
-    if (!uploadedDemo) {
-      return '❌ Nenhuma demo carregada. Clique em **UPLOAD** para enviar um arquivo .dem e destravar a análise.';
-    }
-
-    if (lower.includes('status')) {
-      if (isProcessing) {
-        const stage = progress < 30
-          ? 'fazendo parsing inicial'
-          : progress < 60
-            ? 'extraindo eventos-chave'
-            : progress < 90
-              ? 'calculando estatísticas avançadas'
-              : 'gerando relatório final com IA';
-        return `⏱️ Processando **${uploadedDemo.name}** • ${progress}% completo.\n\nEtapa atual: ${stage}.`;
-      }
-
-      if (analysis) {
-        const mode = analysis.type === 'player' ? 'Análise individual pronta! ✅' : 'Análise de time pronta! ✅';
-        return `${mode}\nAbra a seção de resultados para revisar heatmap, radar e recomendações personalizadas.`;
-      }
-
-      if (!analysisType) {
-        return '📥 Demo carregada, aguardando você escolher o foco: digite **"player"** ou **"team"** para começar a processar.';
-      }
-
-      return '🚦 Análise ainda não iniciada. Clique no cartão correspondente ou peça "start" para começar o processamento.';
-    }
-
-    if (lower.includes('ajuda') || lower.includes('help')) {
-      return '💬 **RUSH - coach IA**\n\nComandos úteis:\n• "player" ou "team" → escolher foco da análise\n• "status" → verificar progresso\n• "heatmap", "radar", "economia", "recomendações" → detalhes após a análise\n• "como funciona" → ver o fluxo completo';
-    }
-
-    if (!analysis && !isProcessing) {
-      if (lower.includes('como funciona') || lower.includes('funciona')) {
-        return '📌 Fluxo: 1) Faça upload da demo. 2) Escolha análise **player** ou **team**. 3) IA processa eventos, gera heatmap e radar 2D. 4) RUSH responde com insights, gráficos e plano de treino.';
-      }
-
-      if (lower.includes('player') || lower.includes('jogador')) {
-        return '⚡ Perfeito! Preparei o modo **Análise Individual**. Clique no cartão correspondente para iniciar quando quiser.';
-      }
-
-      if (lower.includes('team') || lower.includes('time')) {
-        return '🏆 Vamos analisar a equipe inteira. Clique no cartão **Análise de Time** para começar o processamento.';
-      }
-    }
-
-    if (analysis) {
-      if (lower.includes('heatmap')) {
-        const hotspots = analysis.heatmapHotspots
-          .map(zone => `• ${zone.zone}: ${zone.note}`)
-          .join('\n');
-        return `🔥 Heatmap pronto!\n\n${analysis.heatmapSummary}\n\nHotspots relevantes:\n${hotspots}`;
-      }
-
-      if (lower.includes('radar') || lower.includes('rotac') || lower.includes('replay')) {
-        const moment = analysis.radarMoments[0];
-        if (moment) {
-          const players = moment.players
-            .map(player => `• ${player.name} (${player.role.toUpperCase()}): ${player.action}`)
-            .join('\n');
-          return `🗺️ Radar 2D destaca: ${moment.highlight}\n\nCallout: ${moment.callout} • Tempo: ${moment.clock}\n${players}`;
-        }
-      }
-
-      if (lower.includes('econom')) {
-        const swings = analysis.economy.swings.map(item => `• ${item}`).join('\n');
-        return `💰 Economia sob controle: gasto médio **$${analysis.economy.averageSpend.toLocaleString('pt-BR')}**. ${analysis.economy.economyStrength}\n\nPontos-chave:\n${swings}`;
-      }
-
-      if (lower.includes('recom') || lower.includes('melhor') || lower.includes('improve')) {
-        const recs = analysis.recommendations.map(item => `• ${item}`).join('\n');
-        return `🎯 Prioridades de treino:\n${recs}`;
-      }
-
-      if (lower.includes('round')) {
-        const highlight = analysis.roundHighlights[0];
-        if (highlight) {
-          return `📆 Round ${highlight.round}: ${highlight.result}\n${highlight.detail}`;
-        }
-      }
-
-      const findings = analysis.keyFindings.map(item => `• ${item}`).join('\n');
-      return `📊 Resumo rápido:\n${analysis.summary}\n\nPrincipais achados:\n${findings}`;
-    }
-
-    if (isProcessing) {
-      return `🚀 Ainda processando **${uploadedDemo.name}**. Progresso atual: ${progress}%. Vou avisar quando terminar!`;
-    }
-
-    if (lower.includes('player') || lower.includes('jogador')) {
-      return '⚡ Modo jogador selecionado. Vá para a próxima tela e inicie a análise quando estiver pronto.';
-    }
-
-    if (lower.includes('team') || lower.includes('time')) {
-      return '🏆 Modo time configurado. É só iniciar a análise para ver coordenação, economia e execuções.';
-    }
-
-    if (lower.includes('demo') || lower.includes('arquivo')) {
-      return `📁 Upload detectado:\n✅ Arquivo: ${uploadedDemo.name}\n✅ Tamanho: ${uploadedDemo.sizeMB}MB\n\nAgora escolha **"player"** ou **"team"**.`;
-    }
-
-    return `🤖 RUSH aqui! Demo carregada: **${uploadedDemo.name}** (${uploadedDemo.sizeMB}MB).\nDigite **"player"** ou **"team"** para começarmos, ou pergunte "como funciona" para saber mais.`;
-  };
-
-  const handleChatSubmit = (
+  const handleChatSubmit = async (
     event?:
       | React.FormEvent<HTMLFormElement>
       | React.MouseEvent<HTMLButtonElement>
@@ -448,54 +238,162 @@ const CS2ProAnalyzerApp = () => {
     if (!chatInput.trim()) return;
 
     const message = chatInput.trim();
-    const lower = message.toLowerCase();
-
     setChatMessages(prev => [...prev, { role: 'user', text: message }]);
     setChatInput('');
 
+    const lower = message.toLowerCase();
+
     if ((lower.includes('player') || lower.includes('jogador')) && uploadedDemo) {
-      setTimeout(() => {
-        setAnalysisType('player');
-        setCurrentPage('select-analysis');
-      }, 400);
+      setAnalysisType('player');
+      setCurrentPage('select-analysis');
     }
 
     if ((lower.includes('team') || lower.includes('time')) && uploadedDemo) {
-      setTimeout(() => {
-        setAnalysisType('team');
-        setCurrentPage('select-analysis');
-      }, 400);
+      setAnalysisType('team');
+      setCurrentPage('select-analysis');
     }
 
-    const response = generateRushResponse(message);
-    setTimeout(() => {
-      setChatMessages(prev => [...prev, { role: 'ai', text: response }]);
-    }, 500);
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/rush`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          uploadId: uploadedDemo?.id ?? null,
+          jobId: activeJobId,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Falha ao receber resposta da RUSH.');
+      }
+
+      setChatMessages(prev => [...prev, { role: 'ai', text: payload.reply }]);
+    } catch (error) {
+      const messageError = error instanceof Error ? error.message : 'Erro inesperado na conversa.';
+      setChatMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${messageError}` }]);
+    }
   };
 
   const startAnalysis = async (type: 'player' | 'team') => {
+    if (!uploadedDemo) {
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: '⚠️ Faça upload de uma demo antes de iniciar a análise.' },
+      ]);
+      return;
+    }
+
     setAnalysisType(type);
     setIsProcessing(true);
     setProgress(0);
     setAnalysis(null);
+    setJobError(null);
     setCurrentPage('processing');
+    setJobStatus('processing');
 
     try {
-      const result = await simulateAnalysis(type);
-      setAnalysis(result);
-      setProgress(100);
-      setCurrentPage('results');
-    } catch (error) {
-      console.error(error);
+      const response = await fetch(`${API_BASE_URL}/analysis/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadId: uploadedDemo.id, type }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Falha ao iniciar a análise.');
+      }
+
+      setActiveJobId(payload.jobId);
+      setJobStatus(payload.status ?? 'processing');
       setChatMessages(prev => [
         ...prev,
-        { role: 'ai', text: '⚠️ Ocorreu um erro ao processar a demo. Tente novamente em instantes.' }
+        { role: 'ai', text: '⚙️ Iniciei a análise. Vou avisar quando terminar!' },
       ]);
-      setCurrentPage('upload-area');
-    } finally {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro inesperado ao iniciar a análise.';
+      setJobError(message);
       setIsProcessing(false);
+      setJobStatus('idle');
+      setCurrentPage('select-analysis');
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: `⚠️ ${message}` },
+      ]);
     }
   };
+
+  useEffect(() => {
+    if (!isProcessing || !activeJobId) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/analysis/${activeJobId}/status`);
+        const payload: JobStatusResponse & { error?: string } = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? 'Falha ao consultar o status do job.');
+        }
+
+        if (cancelled) return;
+
+        setProgress(payload.progress);
+        setJobStatus(payload.status);
+
+        if (payload.status === 'failed') {
+          const errorMessage = payload.error ?? 'Análise falhou.';
+          setIsProcessing(false);
+          setJobError(errorMessage);
+          setCurrentPage('select-analysis');
+          setChatMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${errorMessage}` }]);
+          return;
+        }
+
+        if (payload.status === 'completed') {
+          const resultResponse = await fetch(`${API_BASE_URL}/analysis/${activeJobId}/result`);
+          const resultPayload = await resultResponse.json();
+
+          if (!resultResponse.ok) {
+            throw new Error(resultPayload.error ?? 'Falha ao recuperar o relatório.');
+          }
+
+          if (cancelled) return;
+
+          setAnalysis(resultPayload.analysis as AnalysisData);
+          setIsProcessing(false);
+          setProgress(100);
+          setCurrentPage('results');
+          setChatMessages(prev => [...prev, { role: 'ai', text: '✅ Análise concluída! Confira os resultados completos.' }]);
+          return;
+        }
+
+        timeoutId = setTimeout(fetchStatus, 1500);
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : 'Erro ao monitorar o job.';
+        setJobError(message);
+        setIsProcessing(false);
+        setJobStatus('idle');
+        setCurrentPage('select-analysis');
+        setChatMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${message}` }]);
+      }
+    };
+
+    fetchStatus();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isProcessing, activeJobId]);
 
   // ==================== LANDING PAGE ====================
   if (currentPage === 'landing') {
@@ -871,6 +769,12 @@ const CS2ProAnalyzerApp = () => {
                     </div>
                   </div>
                 )}
+
+                {jobError && (
+                  <div className="mt-6 text-sm text-red-400 font-semibold">
+                    {jobError}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -965,6 +869,11 @@ const CS2ProAnalyzerApp = () => {
           <h2 className="text-5xl font-black text-white text-center mb-4">
             Escolha o Tipo de <span className="text-orange-500">Análise</span>
           </h2>
+          {jobError && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-200 text-sm px-4 py-3 rounded-2xl mb-10 text-center">
+              {jobError}
+            </div>
+          )}
           <p className="text-center text-gray-400 mb-12 text-xl">
             Demo: <span className="text-white font-semibold">{uploadedDemo?.name}</span>
           </p>
@@ -1010,6 +919,15 @@ const CS2ProAnalyzerApp = () => {
           <h3 className="text-4xl font-black text-white mb-6">Processando Demo</h3>
           <p className="text-gray-400 mb-10 text-xl">
             IA analisando <span className="text-orange-500 font-bold">{uploadedDemo?.name}</span>
+          </p>
+          <p className="text-sm text-gray-500 mb-8 uppercase tracking-[0.3em]">
+            Status: {
+              jobStatus === 'idle' ? 'Aguardando' :
+              jobStatus === 'queued' ? 'Na fila' :
+              jobStatus === 'processing' ? 'Processando' :
+              jobStatus === 'completed' ? 'Concluído' :
+              'Falhou'
+            }
           </p>
           
           <div className="bg-black rounded-full h-4 overflow-hidden mb-10 shadow-inner">
