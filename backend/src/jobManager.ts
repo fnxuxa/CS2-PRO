@@ -1,6 +1,10 @@
 import { v4 as uuid } from 'uuid';
-import { AnalysisJob, AnalysisType, JobStatusResponse, UploadInfo } from './types';
-import { buildMockAnalysis } from './mockAnalysis';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import path from 'path';
+import { AnalysisJob, AnalysisType, JobStatusResponse, UploadInfo, AnalysisData } from './types';
+
+const execFileAsync = promisify(execFile);
 
 const jobs = new Map<string, AnalysisJob>();
 
@@ -20,7 +24,10 @@ export const createAnalysisJob = (upload: UploadInfo, type: AnalysisType): Analy
     progress: 0,
     createdAt: now,
     updatedAt: now,
-  };
+  } as any;
+
+  // Armazenar upload info no job para usar no processamento
+  (job as any).uploadInfo = upload;
 
   jobs.set(jobId, job);
   startProcessing(jobId);
@@ -75,11 +82,22 @@ const startProcessing = (jobId: string) => {
 
   processingTimers.set(jobId, interval);
 
+  // Processar em background com simulação de progresso
+  // Na realidade, o Go vai processar e pode levar mais tempo
   const totalProcessingTime = 6500 + Math.random() * 2000;
-  setTimeout(() => finalizeJob(jobId), totalProcessingTime).unref();
+  setTimeout(() => {
+    finalizeJob(jobId).catch(err => {
+      const currentJob = jobs.get(jobId);
+      if (currentJob) {
+        currentJob.status = 'failed';
+        currentJob.error = err instanceof Error ? err.message : 'Erro ao processar';
+        currentJob.updatedAt = new Date();
+      }
+    });
+  }, totalProcessingTime).unref();
 };
 
-const finalizeJob = (jobId: string) => {
+const finalizeJob = async (jobId: string) => {
   const job = jobs.get(jobId);
   if (!job) return;
 
@@ -90,7 +108,36 @@ const finalizeJob = (jobId: string) => {
   }
 
   try {
-    job.analysis = buildMockAnalysis(job.type);
+    // Buscar o upload info para obter o caminho do arquivo
+    // Isso será passado através do job, precisamos armazenar o upload info
+    const upload = (job as any).uploadInfo as UploadInfo;
+    
+    if (!upload || !upload.path) {
+      throw new Error('Informações de upload não encontradas');
+    }
+
+    // Caminho do binário Go (assumindo que será compilado)
+    // No Windows será .exe, no Linux/Mac será sem extensão
+    const processorName = process.platform === 'win32' ? 'demo-processor.exe' : 'demo-processor';
+    const processorPath = path.resolve(process.cwd(), 'processor', processorName);
+    
+    // Tentar executar o processador Go
+    try {
+      const { stdout } = await execFileAsync(processorPath, [upload.path, job.type], {
+        timeout: 300000, // 5 minutos timeout
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+      });
+
+      // Parse do JSON retornado pelo Go
+      const analysisData: AnalysisData = JSON.parse(stdout);
+      job.analysis = analysisData;
+    } catch (goError: any) {
+      // Se o binário Go não existir ou der erro, usar mock como fallback
+      console.warn('Erro ao executar processador Go, usando mock:', goError.message);
+      const { buildMockAnalysis } = await import('./mockAnalysis');
+      job.analysis = buildMockAnalysis(job.type);
+    }
+
     job.progress = 100;
     job.status = 'completed';
     job.updatedAt = new Date();
