@@ -51,14 +51,14 @@ Etapa atual: ${stage}.`;
   }
 
   if (lower.includes('ajuda') || lower.includes('help')) {
-    return '💬 **RUSH - coach IA**
+    return `💬 **RUSH - coach IA**
 
 Use um dos comandos:
 • "player" → iniciar análise individual
 • "team" → iniciar análise de time
 • "status" → ver progresso
 • "heatmap", "radar", "economia", "recomendações" → detalhes após finalizar
-• "como funciona" → entender o fluxo completo';
+• "como funciona" → entender o fluxo completo`;
   }
 
   if (!job) {
