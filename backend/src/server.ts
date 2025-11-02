@@ -73,15 +73,14 @@ app.post('/upload', upload.single('demo'), (req: Request, res: Response) => {
 });
 
 app.post('/analysis/start', (req: Request, res: Response) => {
-  const { uploadId, type } = req.body as { uploadId?: string; type?: AnalysisType };
+  const { uploadId, steamId } = req.body as { uploadId?: string; steamId?: string };
 
   if (!uploadId || typeof uploadId !== 'string') {
     return res.status(400).json({ error: 'uploadId é obrigatório.' });
   }
 
-  if (type !== 'player' && type !== 'team') {
-    return res.status(400).json({ error: 'type deve ser "player" ou "team".' });
-  }
+  // Steam ID é opcional - se não fornecido, faz análise geral
+  const targetSteamId = steamId && steamId.trim() !== '' ? steamId.trim() : undefined;
 
   const uploadInfo = uploadsStore.get(uploadId);
 
@@ -89,7 +88,8 @@ app.post('/analysis/start', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Upload não encontrado. Reenvie o arquivo.' });
   }
 
-  const job = createAnalysisJob(uploadInfo, type);
+  // Para compatibilidade, ainda usamos 'player' como type, mas agora com steamId
+  const job = createAnalysisJob(uploadInfo, 'player', targetSteamId);
 
   res.status(201).json({
     jobId: job.id,

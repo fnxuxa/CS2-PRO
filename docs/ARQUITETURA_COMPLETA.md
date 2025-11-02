@@ -324,3 +324,5 @@ server {
 5. ⏳ Melhorar heatmap com dados reais do mapa
 6. ⏳ Chatbot RUSH com contexto completo
 
+
+

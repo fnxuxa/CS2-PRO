@@ -144,6 +144,7 @@ const CS2ProAnalyzerApp = () => {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobLifecycleStatus>('idle');
   const [jobError, setJobError] = useState<string | null>(null);
+  const [steamId, setSteamId] = useState<string>('');
 
   const metrics = useMemo<MetricCard[]>(() => {
     if (!analysis) return [];
@@ -277,7 +278,7 @@ Digite **"player"** ou **"team"** para iniciar a análise!`,
     }
   };
 
-  const startAnalysis = async (type: 'player' | 'team') => {
+  const startAnalysis = async (steamIdInput?: string) => {
     if (!uploadedDemo) {
       setChatMessages(prev => [
         ...prev,
@@ -286,7 +287,7 @@ Digite **"player"** ou **"team"** para iniciar a análise!`,
       return;
     }
 
-    setAnalysisType(type);
+    setAnalysisType('player'); // Mantemos 'player' para compatibilidade
     setIsProcessing(true);
     setProgress(0);
     setAnalysis(null);
@@ -294,11 +295,18 @@ Digite **"player"** ou **"team"** para iniciar a análise!`,
     setCurrentPage('processing');
     setJobStatus('processing');
 
+    // Usar steamId do estado ou do parâmetro
+    const targetSteamId = steamIdInput || steamId || undefined;
+    const requestBody: { uploadId: string; steamId?: string } = { uploadId: uploadedDemo.id };
+    if (targetSteamId && targetSteamId.trim() !== '') {
+      requestBody.steamId = targetSteamId.trim();
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/analysis/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId: uploadedDemo.id, type }),
+        body: JSON.stringify(requestBody),
       });
 
       const payload = await response.json();
@@ -878,28 +886,44 @@ Digite **"player"** ou **"team"** para iniciar a análise!`,
             Demo: <span className="text-white font-semibold">{uploadedDemo?.name}</span>
           </p>
           
-          <div className="grid md:grid-cols-2 gap-10">
-            <button
-              onClick={() => startAnalysis('player')}
-              className="group bg-gray-900 hover:bg-gradient-to-br hover:from-orange-500/20 hover:to-orange-600/20 border-2 border-gray-800 hover:border-orange-500 rounded-3xl p-12 transition-all duration-300 hover:scale-105 shadow-xl hover:shadow-orange-500/30"
-            >
-              <User className="w-28 h-28 text-orange-500 mx-auto mb-6 group-hover:scale-110 transition-transform" />
-              <h3 className="text-4xl font-black text-white mb-6">Análise Individual</h3>
-              <p className="text-gray-400 text-lg leading-relaxed">
-                K/D, HS%, ADR, Rating 2.0, posicionamento, clutches, utility usage e comparação com pros
+          <div className="space-y-8">
+            {/* Campo Steam ID */}
+            <div className="bg-gray-900/50 border-2 border-gray-800 rounded-2xl p-6">
+              <label className="block text-white font-semibold text-lg mb-3">
+                Steam ID64 <span className="text-gray-400 text-sm font-normal">(opcional - para análise focada)</span>
+              </label>
+              <input
+                type="text"
+                value={steamId}
+                onChange={(e) => setSteamId(e.target.value)}
+                placeholder="76561198012345678"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+              />
+              <p className="text-gray-400 text-sm mt-2">
+                Deixe em branco para análise geral da partida, ou digite seu Steam ID64 para análise focada no seu desempenho
               </p>
-            </button>
+            </div>
 
-            <button
-              onClick={() => startAnalysis('team')}
-              className="group bg-gray-900 hover:bg-gradient-to-br hover:from-orange-500/20 hover:to-orange-600/20 border-2 border-gray-800 hover:border-orange-500 rounded-3xl p-12 transition-all duration-300 hover:scale-105 shadow-xl hover:shadow-orange-500/30"
-            >
-              <Users className="w-28 h-28 text-orange-500 mx-auto mb-6 group-hover:scale-110 transition-transform" />
-              <h3 className="text-4xl font-black text-white mb-6">Análise de Time</h3>
-              <p className="text-gray-400 text-lg leading-relaxed">
-                Economia, controle de sites, coordenação, trade kills, execuções e pontos fracos coletivos
-              </p>
-            </button>
+            <div className="grid md:grid-cols-2 gap-10">
+              <button
+                onClick={() => startAnalysis()}
+                className="group bg-gray-900 hover:bg-gradient-to-br hover:from-orange-500/20 hover:to-orange-600/20 border-2 border-gray-800 hover:border-orange-500 rounded-3xl p-12 transition-all duration-300 hover:scale-105 shadow-xl hover:shadow-orange-500/30"
+              >
+                <User className="w-28 h-28 text-orange-500 mx-auto mb-6 group-hover:scale-110 transition-transform" />
+                <h3 className="text-4xl font-black text-white mb-6">Iniciar Análise</h3>
+                <p className="text-gray-400 text-lg leading-relaxed">
+                  {steamId ? `Análise focada no seu desempenho (Steam ID: ${steamId})` : 'Análise geral da partida com todos os jogadores'}
+                </p>
+              </button>
+
+              <div className="bg-gray-900/50 border-2 border-gray-800 rounded-3xl p-12 flex flex-col items-center justify-center">
+                <Users className="w-28 h-28 text-gray-600 mx-auto mb-6" />
+                <h3 className="text-4xl font-black text-gray-600 mb-6">Análise de Time</h3>
+                <p className="text-gray-500 text-lg leading-relaxed text-center">
+                  Use o Steam ID do líder do time ou deixe em branco para análise geral
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

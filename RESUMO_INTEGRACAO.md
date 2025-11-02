@@ -168,3 +168,5 @@ npm run dev
 - O JSON completo já tem tudo que a IA precisa
 - O radar replay já tem frames prontos para visualização
 
+
+

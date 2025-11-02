@@ -12,7 +12,7 @@ const processingTimers = new Map<string, NodeJS.Timeout>();
 
 const stageThresholds = [20, 45, 75, 95];
 
-export const createAnalysisJob = (upload: UploadInfo, type: AnalysisType): AnalysisJob => {
+export const createAnalysisJob = (upload: UploadInfo, type: AnalysisType, steamId?: string): AnalysisJob => {
   const jobId = uuid();
   const now = new Date();
 
@@ -26,8 +26,9 @@ export const createAnalysisJob = (upload: UploadInfo, type: AnalysisType): Analy
     updatedAt: now,
   } as any;
 
-  // Armazenar upload info no job para usar no processamento
+  // Armazenar upload info e steamId no job para usar no processamento
   (job as any).uploadInfo = upload;
+  (job as any).steamId = steamId;
 
   jobs.set(jobId, job);
   startProcessing(jobId);
@@ -122,8 +123,15 @@ const finalizeJob = async (jobId: string) => {
     const processorPath = path.resolve(process.cwd(), 'processor', processorName);
     
     // Tentar executar o processador Go
+    // Args: [demo_path, steamId?] - steamId é opcional
+    const args = [upload.path];
+    const steamId = (job as any).steamId;
+    if (steamId && steamId.trim() !== '') {
+      args.push(steamId);
+    }
+
     try {
-      const { stdout } = await execFileAsync(processorPath, [upload.path, job.type], {
+      const { stdout } = await execFileAsync(processorPath, args, {
         timeout: 300000, // 5 minutos timeout
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer
       });

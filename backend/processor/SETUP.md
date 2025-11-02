@@ -92,3 +92,5 @@ const analysisData = JSON.parse(stdout);
 2. ✅ Testar: `./demo-processor.exe storage/uploads/demo.dem player`
 3. ✅ Backend já está configurado para chamar automaticamente!
 
+
+
