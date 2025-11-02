@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair, Shield, Skull, TrendingDown } from 'lucide-react';
 
@@ -74,6 +76,7 @@ interface PlayerStats {
 
 interface TeamStats {
   team: 'CT' | 'T';
+  teamName?: string;
   score: number;
   totalKills: number;
   totalDeaths: number;
@@ -124,6 +127,7 @@ interface AnalysisData {
   topPerformers?: {
     mostKills: PlayerStats;
     mostAssists: PlayerStats;
+    mostDeaths: PlayerStats;
     mostDamage: PlayerStats;
     bestKDRatio: PlayerStats;
   };
@@ -190,20 +194,30 @@ const CS2ProAnalyzerApp = () => {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
-  const [particles, setParticles] = useState<Particle[]>(createParticles);
+  // Inicializar partículas apenas no cliente para evitar problemas de hidratação
+  const [particles, setParticles] = useState<Particle[]>([]);
+  const [isClient, setIsClient] = useState(false);
   const [progress, setProgress] = useState(0);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobLifecycleStatus>('idle');
   const [jobError, setJobError] = useState<string | null>(null);
   const [steamId, setSteamId] = useState<string>('');
+  // Estados para a página de resultados (movidos para fora do condicional para evitar problemas de hidratação)
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'players' | 'teams' | 'rounds' | 'heatmap' | 'radar' | 'chat'>('overview');
+  const [teamComparison, setTeamComparison] = useState<'both' | 'ct' | 't'>('both');
 
   const metrics = useMemo<MetricCard[]>(() => {
     if (!analysis) return [];
     return analysis.playerMetrics ?? analysis.teamMetrics ?? [];
   }, [analysis]);
 
+  // Gerar partículas apenas no cliente (após montagem)
   useEffect(() => {
-    setParticles(createParticles());
+    // Verificar se estamos no cliente (não no servidor SSR)
+    if (typeof window !== 'undefined') {
+      setIsClient(true);
+      setParticles(createParticles());
+    }
   }, []);
 
   useEffect(() => {
@@ -232,6 +246,13 @@ const CS2ProAnalyzerApp = () => {
       setJobError(null);
     }
   }, [uploadedDemo]);
+
+  // Reset tab quando entrar na página de resultados
+  useEffect(() => {
+    if (currentPage === 'results' && analysis) {
+      setSelectedTab('overview');
+    }
+  }, [currentPage, analysis]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -454,22 +475,24 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
   if (currentPage === 'landing') {
     return (
       <div className="min-h-screen bg-black relative overflow-hidden">
-        {/* Particles Background */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {particles.map(particle => (
-            <div
-              key={particle.id}
-              className="absolute bg-orange-500 rounded-full opacity-30"
-              style={{
-                left: `${particle.x}%`,
-                top: `${particle.y}%`,
-                width: `${particle.size}px`,
-                height: `${particle.size}px`,
-                animation: `float ${particle.duration}s ease-in-out infinite ${particle.delay}s`,
-              }}
-            />
-          ))}
-        </div>
+        {/* Particles Background - só renderizar no cliente */}
+        {isClient && particles.length > 0 && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            {particles.map(particle => (
+              <div
+                key={particle.id}
+                className="absolute bg-orange-500 rounded-full opacity-30"
+                style={{
+                  left: `${particle.x}%`,
+                  top: `${particle.y}%`,
+                  width: `${particle.size}px`,
+                  height: `${particle.size}px`,
+                  animation: `float ${particle.duration}s ease-in-out infinite ${particle.delay}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         <style>{`
           @keyframes float {
@@ -741,22 +764,24 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
   if (currentPage === 'upload-area') {
     return (
       <div className="min-h-screen bg-black relative overflow-hidden">
-        {/* Particles */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {particles.map(particle => (
-            <div
-              key={particle.id}
-              className="absolute bg-orange-500 rounded-full opacity-30"
-              style={{
-                left: `${particle.x}%`,
-                top: `${particle.y}%`,
-                width: `${particle.size}px`,
-                height: `${particle.size}px`,
-                animation: `float ${particle.duration}s ease-in-out infinite ${particle.delay}s`,
-              }}
-            />
-          ))}
-        </div>
+        {/* Particles - só renderizar no cliente */}
+        {isClient && particles.length > 0 && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            {particles.map(particle => (
+              <div
+                key={particle.id}
+                className="absolute bg-orange-500 rounded-full opacity-30"
+                style={{
+                  left: `${particle.x}%`,
+                  top: `${particle.y}%`,
+                  width: `${particle.size}px`,
+                  height: `${particle.size}px`,
+                  animation: `float ${particle.duration}s ease-in-out infinite ${particle.delay}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         <style>{`
           @keyframes float {
@@ -1033,8 +1058,6 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
 
   // ==================== RESULTS PAGE ====================
   if (currentPage === 'results' && analysis) {
-    const [selectedTab, setSelectedTab] = useState<'overview' | 'players' | 'teams' | 'rounds' | 'heatmap' | 'radar' | 'chat'>('overview');
-    const [teamComparison, setTeamComparison] = useState<'both' | 'ct' | 't'>('both');
     
     const players = analysis.players || [];
     const teams = analysis.teams || [];
@@ -1049,7 +1072,7 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
     }));
     
     // Fallbacks para topPerformers
-    const getTopPerformer = (key: 'mostKills' | 'mostAssists' | 'mostDamage' | 'bestKDRatio'): PlayerStats | null => {
+    const getTopPerformer = (key: 'mostKills' | 'mostAssists' | 'mostDeaths' | 'mostDamage' | 'bestKDRatio'): PlayerStats | null => {
       if (!topPerformers || !topPerformers[key]) {
         if (players.length === 0) return null;
         const p = players[0];
@@ -1105,29 +1128,29 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
               <div className="md:col-span-2">
                 <div className="bg-black/60 border-2 border-gray-800 rounded-2xl p-6">
                   <div className="flex items-center justify-between">
-                    <div className="text-center flex-1">
-                      <div className="flex items-center justify-center gap-2 mb-2">
-                        <Shield className="w-6 h-6 text-blue-400" />
-                        <span className="text-gray-400 text-sm uppercase tracking-wider">Counter-Terrorists</span>
+                      <div className="text-center flex-1">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <Shield className="w-6 h-6 text-blue-400" />
+                          <span className="text-gray-400 text-sm font-semibold">{teams.find(t => t.team === 'CT')?.teamName || 'Counter-Terrorists'}</span>
+                        </div>
+                        <div className="text-5xl font-black text-blue-400">{teams.find(t => t.team === 'CT')?.score || '0'}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {teams.find(t => t.team === 'CT')?.totalKills || 0} kills • K/D: {teams.find(t => t.team === 'CT')?.avgKDRatio.toFixed(2) || '0.00'}
+                        </div>
                       </div>
-                      <div className="text-5xl font-black text-blue-400">{teams.find(t => t.team === 'CT')?.score || '0'}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {teams.find(t => t.team === 'CT')?.totalKills || 0} kills • K/D: {teams.find(t => t.team === 'CT')?.avgKDRatio.toFixed(2) || '0.00'}
+                      
+                      <div className="text-3xl font-black text-gray-600 mx-4">VS</div>
+                      
+                      <div className="text-center flex-1">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <Skull className="w-6 h-6 text-orange-400" />
+                          <span className="text-gray-400 text-sm font-semibold">{teams.find(t => t.team === 'T')?.teamName || 'Terrorists'}</span>
+                        </div>
+                        <div className="text-5xl font-black text-orange-400">{teams.find(t => t.team === 'T')?.score || '0'}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {teams.find(t => t.team === 'T')?.totalKills || 0} kills • K/D: {teams.find(t => t.team === 'T')?.avgKDRatio.toFixed(2) || '0.00'}
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div className="text-3xl font-black text-gray-600 mx-4">VS</div>
-                    
-                    <div className="text-center flex-1">
-                      <div className="flex items-center justify-center gap-2 mb-2">
-                        <Skull className="w-6 h-6 text-orange-400" />
-                        <span className="text-gray-400 text-sm uppercase tracking-wider">Terrorists</span>
-                      </div>
-                      <div className="text-5xl font-black text-orange-400">{teams.find(t => t.team === 'T')?.score || '0'}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {teams.find(t => t.team === 'T')?.totalKills || 0} kills • K/D: {teams.find(t => t.team === 'T')?.avgKDRatio.toFixed(2) || '0.00'}
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1183,7 +1206,12 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                         <Skull className="w-5 h-5 text-red-400" />
                         <h4 className="text-lg font-bold text-white">Mais Kills</h4>
                       </div>
-                      <p className="text-2xl font-black text-red-400">{getTopPerformer('mostKills')?.name || playersByKills[0]?.name || 'N/A'}</p>
+                      <p className="text-2xl font-black text-red-400 truncate max-w-full" title={getTopPerformer('mostKills')?.name || playersByKills[0]?.name || 'N/A'}>
+                        {(() => {
+                          const name = getTopPerformer('mostKills')?.name || playersByKills[0]?.name || 'N/A';
+                          return name.length > 20 ? `${name.substring(0, 17)}...` : name;
+                        })()}
+                      </p>
                       <p className="text-sm text-gray-400 mt-1">{getTopPerformer('mostKills')?.kills || playersByKills[0]?.kills || 0} eliminações</p>
                     </div>
                     
@@ -1192,12 +1220,51 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                         <Target className="w-5 h-5 text-blue-400" />
                         <h4 className="text-lg font-bold text-white">Mais Assists</h4>
                       </div>
-                      <p className="text-2xl font-black text-blue-400">{getTopPerformer('mostAssists')?.name || playersByAssists[0]?.name || 'N/A'}</p>
+                      <p className="text-2xl font-black text-blue-400 truncate max-w-full" title={getTopPerformer('mostAssists')?.name || playersByAssists[0]?.name || 'N/A'}>
+                        {(() => {
+                          const name = getTopPerformer('mostAssists')?.name || playersByAssists[0]?.name || 'N/A';
+                          return name.length > 20 ? `${name.substring(0, 17)}...` : name;
+                        })()}
+                      </p>
                       <p className="text-sm text-gray-400 mt-1">{getTopPerformer('mostAssists')?.assists || playersByAssists[0]?.assists || 0} assistências</p>
                     </div>
                   </>
                 )}
               </div>
+
+              {/* Informações da Demo (GC/Valve, Warmup) */}
+              {(analysis.source || analysis.warmupRounds !== undefined || analysis.knifeRound) && (
+                <div className="bg-gradient-to-r from-purple-500/20 to-blue-500/20 border-2 border-purple-500 rounded-3xl p-6">
+                  <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                    <span>📋</span>
+                    Informações da Demo
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {analysis.source && (
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">Fonte</p>
+                        <p className="text-2xl font-black text-white">
+                          {analysis.source === 'GC' ? '🎮 Gamers Club' : '🎯 Valve Matchmaking'}
+                        </p>
+                      </div>
+                    )}
+                    {analysis.warmupRounds !== undefined && analysis.warmupRounds > 0 && (
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">Rounds de Aquecimento</p>
+                        <p className="text-2xl font-black text-orange-400">{analysis.warmupRounds}</p>
+                        <p className="text-xs text-gray-400 mt-1">Ignorados na análise</p>
+                      </div>
+                    )}
+                    {analysis.knifeRound && (
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">Round de Faca</p>
+                        <p className="text-2xl font-black text-yellow-400">Detectado</p>
+                        <p className="text-xs text-gray-400 mt-1">Ignorado na análise</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Métricas Principais */}
               {metrics.length > 0 && (
@@ -1264,7 +1331,7 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
           {selectedTab === 'players' && (
             <div className="space-y-8">
               {/* Top Performers Cards */}
-              <div className="grid md:grid-cols-4 gap-4">
+              <div className="grid md:grid-cols-5 gap-4">
                 {(topPerformers || players.length > 0) && (
                   <>
                     <div className="bg-gradient-to-br from-red-500/20 to-red-600/20 border-2 border-red-500 rounded-2xl p-6">
@@ -1274,6 +1341,15 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                       </div>
                       <p className="text-2xl font-black text-red-400">{getTopPerformer('mostKills')?.name || playersByKills[0]?.name || 'N/A'}</p>
                       <p className="text-sm text-gray-400">{getTopPerformer('mostKills')?.kills || playersByKills[0]?.kills || 0} eliminações</p>
+                    </div>
+                    
+                    <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/20 border-2 border-purple-500 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertCircle className="w-5 h-5 text-purple-400" />
+                        <h4 className="font-bold text-white">Mais Mortes</h4>
+                      </div>
+                      <p className="text-2xl font-black text-purple-400">{getTopPerformer('mostDeaths')?.name || [...players].sort((a, b) => b.deaths - a.deaths)[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400">{getTopPerformer('mostDeaths')?.deaths || [...players].sort((a, b) => b.deaths - a.deaths)[0]?.deaths || 0} mortes</p>
                     </div>
                     
                     <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/20 border-2 border-blue-500 rounded-2xl p-6">
@@ -1347,7 +1423,9 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                           <td className="py-4 px-4">
                             <div className="flex items-center gap-3">
                               <span className="text-gray-500 font-bold">#{idx + 1}</span>
-                              <span className="text-white font-semibold">{player.name}</span>
+                              <span className="text-white font-semibold truncate max-w-[200px]" title={player.name}>
+                                {player.name.length > 25 ? `${player.name.substring(0, 22)}...` : player.name}
+                              </span>
                             </div>
                           </td>
                           <td className="text-center py-4 px-4">
@@ -1437,7 +1515,7 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                       )}
                       <div>
                         <h3 className="text-2xl font-bold text-white">
-                          {team.team === 'CT' ? 'Counter-Terrorists' : 'Terrorists'}
+                          {team.teamName || (team.team === 'CT' ? 'Counter-Terrorists' : 'Terrorists')}
                         </h3>
                         <p className="text-sm text-gray-400">Score: {team.score}</p>
                       </div>
@@ -1480,7 +1558,10 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                                 ></div>
                               </div>
                               <p className="text-xs text-gray-400 mt-2">
-                                {zone.kills} kills, {zone.deaths} deaths
+                                {zone.kills} kills na zona
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                Controle: {zone.control > 50 ? (teams.find(t => t.team === 'CT')?.teamName || 'CT') : (teams.find(t => t.team === 'T')?.teamName || 'T')} ({zone.control}%)
                               </p>
                             </div>
                           ))}
@@ -1622,11 +1703,33 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
           {selectedTab === 'radar' && (
             <div className="space-y-8">
               <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex items-center gap-3 mb-6">
                   <Compass className="w-8 h-8 text-cyan-400" />
                   <div>
                     <h3 className="text-2xl font-bold text-white">Radar &amp; Rotação</h3>
                     <p className="text-sm text-gray-400">Momentos chave e movimentação no mapa</p>
+                  </div>
+                </div>
+                
+                {/* Explicação sobre Radar e Rotação */}
+                <div className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-2 border-cyan-500/30 rounded-2xl p-6 mb-6">
+                  <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                    <span>ℹ️</span>
+                    O que é Radar & Rotação?
+                  </h4>
+                  <div className="space-y-3 text-gray-300">
+                    <p>
+                      <strong className="text-cyan-400">Radar:</strong> São snapshots do posicionamento dos jogadores em momentos importantes da partida (início e fim de rounds, após kills importantes). 
+                      Mostra onde cada jogador estava no mapa naquele momento.
+                    </p>
+                    <p>
+                      <strong className="text-cyan-400">Rotação:</strong> Refere-se à movimentação estratégica dos jogadores entre as áreas do mapa. 
+                      Por exemplo, quando um time CT precisa se mover do bomb site A para o B após uma jogada dos Terroristas, isso é uma "rotação". 
+                      Esta seção ajuda a entender como os times se reposicionaram durante a partida.
+                    </p>
+                    <p className="text-sm text-gray-400 mt-3">
+                      💡 Cada card mostra o posicionamento dos jogadores, o round, o tempo do jogo e a fase do round (início, meio ou fim).
+                    </p>
                   </div>
                 </div>
                 
@@ -1662,8 +1765,10 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
                                   className="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2"
                                 >
                                   <span className={`w-3 h-3 rounded-full ${player.role === 'ct' ? 'bg-blue-400' : 'bg-orange-400'}`}></span>
-                                  <span className="text-white font-semibold text-sm">{player.name}</span>
-                                  <span className="text-gray-500 text-xs ml-auto">{player.action}</span>
+                                  <span className="text-white font-semibold text-sm truncate max-w-[150px]" title={player.name}>
+                                    {player.name.length > 20 ? `${player.name.substring(0, 17)}...` : player.name}
+                                  </span>
+                                  <span className="text-gray-500 text-xs ml-auto whitespace-nowrap">{player.action}</span>
                                 </div>
                               ))}
                             </div>
@@ -1777,5 +1882,4 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
   );
 };
 
-export default CS2ProAnalyzerApp;
 export default CS2ProAnalyzerApp;

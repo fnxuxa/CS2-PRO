@@ -60,6 +60,7 @@ export interface PlayerStats {
 
 export interface TeamStats {
   team: 'CT' | 'T';
+  teamName?: string; // Nome do time baseado no MVP
   score: number;
   totalKills: number;
   totalDeaths: number;
@@ -112,10 +113,15 @@ export interface AnalysisData {
   topPerformers: {
     mostKills: PlayerStats;
     mostAssists: PlayerStats;
+    mostDeaths: PlayerStats;
     mostDamage: PlayerStats;
     bestKDRatio: PlayerStats;
   };
   detailedRounds: DetailedRound[];
+  // Novos campos para warmup/knife detection
+  warmupRounds?: number;
+  knifeRound?: boolean;
+  source?: string; // "GC" ou "Valve"
 }
 
 export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';

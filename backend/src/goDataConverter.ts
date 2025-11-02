@@ -7,6 +7,9 @@ interface GoMetadata {
   rounds: number;
   scoreT: number;
   scoreCT: number;
+  warmupRounds?: number;  // Número de rounds de aquecimento
+  knifeRound?: boolean;   // Se tem round de faca
+  source?: string;        // "GC" ou "Valve"
 }
 
 interface GoEvent {
@@ -14,6 +17,8 @@ interface GoEvent {
   time: number;
   tick: number;
   round: number;
+  isWarmup?: boolean;  // Se o evento é de round de aquecimento
+  isKnife?: boolean;   // Se o evento é de round de faca
   data?: any;
 }
 
@@ -67,7 +72,6 @@ interface GoAnalysis {
  * Determina zona do mapa baseado na posição X,Y,Z
  */
 const getMapZone = (x: number, y: number, z: number, mapName: string): string => {
-  // Mapeamento básico por coordenadas (pode ser expandido)
   const absX = Math.abs(x);
   const absY = Math.abs(y);
   
@@ -92,64 +96,252 @@ const getMapZone = (x: number, y: number, z: number, mapName: string): string =>
 export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisType = 'player'): AnalysisData => {
   const { metadata, events, players, summary, heatmap } = goData;
 
+  // Filtrar eventos válidos (ignorar warmup e knife rounds)
+  // Usar IsWarmup e IsKnife se disponíveis, caso contrário fallback para round > 0
+  const validEvents = events.filter(e => {
+    if (e.isWarmup === true || e.isKnife === true) {
+      return false; // Ignorar warmup e knife rounds
+    }
+    // Fallback: ignorar round 0 ou negativo
+    return e.round > 0;
+  });
+  
+  // VERIFICAR SE É GC (Gamers Club) OU VALVE MM
+  const isGC = metadata.source === 'GC';
+  
+  // ENCONTRAR O ÚLTIMO ROUND REAL NO OUTPUT
+  let lastRound = 0;
+  validEvents.forEach(e => {
+    if (e.round > 0 && !e.isWarmup && !e.isKnife && e.round > lastRound) {
+      lastRound = e.round;
+    }
+  });
+  
+  // LÓGICA DIFERENTE PARA GC E MM
+  let firstOfficialRound: number;
+  let officialRounds: Set<number>;
+  
+  if (isGC) {
+    // GC: Partida oficial começa no round 5, contar do round 5 até o fim (pode ter overtime)
+    firstOfficialRound = 5;
+    officialRounds = new Set<number>();
+    for (let r = firstOfficialRound; r <= lastRound; r++) {
+      officialRounds.add(r);
+    }
+    console.log(`[DEBUG GC] Partida GC detectada: contando do round ${firstOfficialRound} até ${lastRound} (${officialRounds.size} rounds)`);
+  } else {
+    // VALVE MM: Contar TODOS os rounds oficiais desde o início até o fim (pode ter overtime)
+    // MM não precisa ignorar rounds iniciais, conta todos os rounds oficiais
+    firstOfficialRound = 1;
+    officialRounds = new Set<number>();
+    for (let r = firstOfficialRound; r <= lastRound; r++) {
+      officialRounds.add(r);
+    }
+    console.log(`[DEBUG MM] Partida Valve MM: contando todos os rounds oficiais do ${firstOfficialRound} até ${lastRound} (${officialRounds.size} rounds)`);
+  }
+  
+  // Filtrar eventos para APENAS os rounds oficiais (GC: do 5 em diante, MM: todos desde o início)
+  const officialEvents = validEvents.filter(e => {
+    const isInRange = officialRounds.has(e.round);
+    const isOfficial = e.round > 0 && !e.isWarmup && !e.isKnife;
+    return isInRange && isOfficial;
+  });
+  
+  console.log(`[DEBUG] Rounds oficiais: ${Array.from(officialRounds).sort((a,b) => a-b).slice(0, 10).join(', ')}... (total: ${officialRounds.size} rounds)`);
+  console.log(`[DEBUG] Total de eventos oficiais: ${officialEvents.length}`);
+  
+  // Usar 'officialEvents' como 'last20Events' para manter compatibilidade com código existente
+  const last20Events = officialEvents;
+  const last20Rounds = officialRounds;
+  
   // Separar jogadores por time
   const ctPlayers = players.filter(p => p.team === 'CT');
   const tPlayers = players.filter(p => p.team === 'T');
 
-  // Calcular estatísticas dos jogadores com dados do targetPlayer se disponível
+  // Calcular estatísticas detalhadas para TODOS os jogadores
+  // IMPORTANTE: Usar apenas eventos dos últimos 20 rounds oficiais
   const playerStatsMap = new Map<number, PlayerStats>();
+  const playerDamageMap = new Map<number, number>(); // Para calcular ADR
+  const playerHSKillsMap = new Map<number, number>(); // Para calcular HS rate
+  const playerKillsByRound = new Map<number, Set<number>>(); // Jogador -> rounds com kills
   
-  players.forEach(p => {
-    const kdRatio = p.deaths > 0 ? p.kills / p.deaths : p.kills;
-    playerStatsMap.set(p.steamID, {
-      steamID: p.steamID,
-      name: p.name,
-      team: p.team as 'CT' | 'T',
-      kills: p.kills,
-      deaths: p.deaths,
-      assists: p.assists,
-      kdRatio,
-    });
+  // Processar eventos de kill para calcular HS rate e contar rounds válidos (APENAS ÚLTIMOS 20)
+  last20Events.forEach(event => {
+    if (event.type === 'kill' && event.data) {
+      const killerSteamID = event.data.killer?.steamID;
+      const isHeadshot = event.data.headshot === true;
+      
+      if (killerSteamID) {
+        // Contar headshots
+        if (isHeadshot) {
+          playerHSKillsMap.set(killerSteamID, (playerHSKillsMap.get(killerSteamID) || 0) + 1);
+        }
+        
+        // Registrar round com kill para contar rounds jogados
+        if (!playerKillsByRound.has(killerSteamID)) {
+          playerKillsByRound.set(killerSteamID, new Set());
+        }
+        playerKillsByRound.get(killerSteamID)!.add(event.round);
+      }
+    }
   });
 
-  // Se tiver targetPlayer com dados detalhados, usar eles
-  if (goData.targetPlayer) {
-    const tp = goData.targetPlayer;
-    const existing = playerStatsMap.get(tp.steamID);
-    if (existing) {
-      playerStatsMap.set(tp.steamID, {
-        ...existing,
-        adr: tp.adr,
-        hsRate: tp.hsRate,
-        kdRatio: tp.kdRatio,
-        damage: tp.damage,
-        roundsPlayed: tp.roundsPlayed,
+  // Nota: O Go processor não retorna eventos de PlayerHurt no JSON
+  // O dano só está disponível para targetPlayer via findPlayerAnalysis
+  // Vamos usar uma estimativa baseada em kills para outros jogadores
+
+  // Contar rounds válidos (oficiais)
+  // GC: todos do round 5 em diante | MM: últimos 20
+  const validRounds = last20Rounds.size;
+  
+  // Recalcular kills e deaths apenas dos últimos 20 rounds oficiais
+  const playerKillsMap = new Map<number, number>();
+  const playerDeathsMap = new Map<number, number>();
+  const playerAssistsMap = new Map<number, number>();
+  
+  last20Events.forEach(event => {
+    if (event.type === 'kill' && event.data) {
+      const killerSteamID = event.data.killer?.steamID;
+      const victimSteamID = event.data.victim?.steamID;
+      
+      // IGNORAR MORTES SEM KILLER (suicídios: queda, explosão própria, etc.) - não conta como death
+      // Em CS2, suicídios não contam nas estatísticas oficiais
+      if (!killerSteamID || killerSteamID === 0) {
+        return; // Pular suicídio (sem killer)
+      }
+      
+      // IGNORAR SELF-KILLS (killer matou a si mesmo) - não conta como kill nem death
+      if (killerSteamID && victimSteamID && killerSteamID === victimSteamID) {
+        return; // Pular self-kill
+      }
+      
+      // IGNORAR TEAM-KILLS (mesmo time) - não conta como kill nem death
+      if (killerSteamID && victimSteamID) {
+        const killerPlayer = players.find(p => p.steamID === killerSteamID);
+        const victimPlayer = players.find(p => p.steamID === victimSteamID);
+        if (killerPlayer && victimPlayer && killerPlayer.team === victimPlayer.team) {
+          return; // Pular team-kill
+        }
+      }
+      
+      if (killerSteamID) {
+        playerKillsMap.set(killerSteamID, (playerKillsMap.get(killerSteamID) || 0) + 1);
+      }
+      if (victimSteamID) {
+        playerDeathsMap.set(victimSteamID, (playerDeathsMap.get(victimSteamID) || 0) + 1);
+      }
+      // Contar assists também
+      const assisterSteamID = event.data.assister ? 
+        (typeof event.data.assister === 'object' && event.data.assister !== null && 'steamID' in event.data.assister
+          ? (event.data.assister as any).steamID
+          : null)
+        : null;
+      // Assist pode vir como string (nome) ou objeto, vamos procurar pelo nome no playerMap
+      if (event.data.assister && typeof event.data.assister === 'string' && event.data.assister.trim() !== '') {
+        const assisterName = event.data.assister;
+        const assisterPlayer = players.find(p => p.name === assisterName);
+        if (assisterPlayer) {
+          playerAssistsMap.set(assisterPlayer.steamID, (playerAssistsMap.get(assisterPlayer.steamID) || 0) + 1);
+        }
+      }
+    }
+  });
+
+  players.forEach(p => {
+    // Usar kills, deaths e assists recalculados APENAS dos últimos 20 rounds oficiais
+    const kills = playerKillsMap.get(p.steamID) || 0;
+    const deaths = playerDeathsMap.get(p.steamID) || 0; // Recontar apenas dos últimos 20
+    const assists = playerAssistsMap.get(p.steamID) || 0; // Recontar apenas dos últimos 20
+    const kdRatio = deaths > 0 ? kills / deaths : kills;
+    
+    // Damage: usar do targetPlayer se disponível, senão estimar baseado em kills
+    let totalDamage = 0;
+    if (goData.targetPlayer && goData.targetPlayer.steamID === p.steamID) {
+      totalDamage = goData.targetPlayer.damage || 0;
+    } else {
+      // Estimativa: média de ~75 de dano por kill (considerando dano não letal)
+      totalDamage = kills * 75;
+    }
+    
+    const hsKills = playerHSKillsMap.get(p.steamID) || 0;
+    const roundsWithKills = playerKillsByRound.get(p.steamID)?.size || 0;
+    const roundsPlayed = roundsWithKills > 0 ? roundsWithKills : validRounds; // Estimativa se não tiver kills
+    
+    // Calcular ADR (dano médio por round)
+    const adr = roundsPlayed > 0 ? totalDamage / roundsPlayed : 0;
+    
+    // Calcular HS rate (percentual de headshots)
+    const hsRate = kills > 0 ? (hsKills / kills) * 100 : 0;
+    
+    // Se tiver targetPlayer com dados mais precisos, usar eles
+    if (goData.targetPlayer && goData.targetPlayer.steamID === p.steamID) {
+      const tp = goData.targetPlayer;
+      playerStatsMap.set(p.steamID, {
+        steamID: p.steamID,
+        name: p.name,
+        team: p.team as 'CT' | 'T',
+        kills,
+        deaths,
+        assists,
+        adr: tp.adr || adr,
+        hsRate: tp.hsRate || hsRate,
+        kdRatio: tp.kdRatio || kdRatio,
+        damage: tp.damage || totalDamage,
+        roundsPlayed: tp.roundsPlayed || roundsPlayed,
+      });
+    } else {
+      playerStatsMap.set(p.steamID, {
+        steamID: p.steamID,
+        name: p.name,
+        team: p.team as 'CT' | 'T',
+        kills,
+        deaths,
+        assists,
+        adr,
+        hsRate,
+        kdRatio,
+        damage: totalDamage,
+        roundsPlayed,
       });
     }
-  }
+  });
 
   const allPlayerStats = Array.from(playerStatsMap.values());
+
+  // Encontrar MVP de cada time (jogador com melhor K/D em cada lado)
+  const ctMVP = ctPlayers.length > 0 
+    ? allPlayerStats
+        .filter(p => p.team === 'CT')
+        .reduce((max, p) => (p.kdRatio || 0) > (max.kdRatio || 0) ? p : max, allPlayerStats.find(p => p.team === 'CT') || allPlayerStats[0])
+    : null;
+  
+  const tMVP = tPlayers.length > 0
+    ? allPlayerStats
+        .filter(p => p.team === 'T')
+        .reduce((max, p) => (p.kdRatio || 0) > (max.kdRatio || 0) ? p : max, allPlayerStats.find(p => p.team === 'T') || allPlayerStats[0])
+    : null;
 
   // Calcular toppers
   const mostKills = allPlayerStats.reduce((max, p) => p.kills > max.kills ? p : max, allPlayerStats[0] || allPlayerStats[0]);
   const mostAssists = allPlayerStats.reduce((max, p) => p.assists > max.assists ? p : max, allPlayerStats[0] || allPlayerStats[0]);
-  const mostDamage = goData.targetPlayer 
-    ? allPlayerStats.find(p => p.steamID === goData.targetPlayer!.steamID) || allPlayerStats[0]
-    : allPlayerStats[0];
+  const mostDeaths = allPlayerStats.reduce((max, p) => p.deaths > max.deaths ? p : max, allPlayerStats[0] || allPlayerStats[0]);
+  const mostDamage = allPlayerStats.reduce((max, p) => (p.adr || 0) > (max.adr || 0) ? p : max, allPlayerStats[0] || allPlayerStats[0]);
   const bestKDRatio = allPlayerStats.reduce((max, p) => (p.kdRatio || 0) > (max.kdRatio || 0) ? p : max, allPlayerStats[0] || allPlayerStats[0]);
 
-  // Análise por zonas do mapa
+  // Análise por zonas do mapa (usando apenas kills dos últimos 20 rounds oficiais)
   const zoneStats: Map<string, { kills: number; deaths: number; team: 'CT' | 'T' }[]> = new Map();
   
-  events.forEach(event => {
+  last20Events.forEach(event => {
     if (event.type === 'kill' && event.data) {
       const killerPos = event.data.killer?.position;
       const victimPos = event.data.victim?.position;
       
       if (killerPos && victimPos) {
         const zone = getMapZone(killerPos.x, killerPos.y, killerPos.z, metadata.map);
-        const killerTeam = event.data.killer?.name ? 
-          (allPlayerStats.find(p => p.name === event.data.killer.name)?.team || 'CT') : 'CT';
+        const killerSteamID = event.data.killer?.steamID;
+        const killerTeam = killerSteamID 
+          ? (allPlayerStats.find(p => p.steamID === killerSteamID)?.team || 'CT') 
+          : 'CT';
         
         if (!zoneStats.has(zone)) {
           zoneStats.set(zone, []);
@@ -165,60 +357,88 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
     }
   });
 
-  // Calcular controle por zona
+  // Calcular controle por zona baseado em kills de cada time na zona
   const zonePerformance: ZonePerformance[] = Array.from(zoneStats.entries()).map(([zone, teamStats]) => {
     const ctStats = teamStats.find(s => s.team === 'CT') || { kills: 0, deaths: 0, team: 'CT' as const };
     const tStats = teamStats.find(s => s.team === 'T') || { kills: 0, deaths: 0, team: 'T' as const };
     const totalKills = ctStats.kills + tStats.kills;
+    // Controle baseado em qual time tem mais kills na zona
+    // CT control = (kills CT / total kills) * 100
     const control = totalKills > 0 ? (ctStats.kills / totalKills) * 100 : 50;
     
     return {
       zone,
-      kills: Math.max(ctStats.kills, tStats.kills),
+      kills: Math.max(ctStats.kills, tStats.kills), // Maior número de kills na zona
       deaths: Math.max(ctStats.deaths, tStats.deaths),
-      control: Math.round(control),
+      control: Math.round(control), // Percentual de controle de CT (0-100)
     };
   });
 
-  // Estatísticas dos times
-  const ctTotalKills = ctPlayers.reduce((sum, p) => sum + p.kills, 0);
-  const ctTotalDeaths = ctPlayers.reduce((sum, p) => sum + p.deaths, 0);
-  const tTotalKills = tPlayers.reduce((sum, p) => sum + p.kills, 0);
-  const tTotalDeaths = tPlayers.reduce((sum, p) => sum + p.deaths, 0);
+  // Calcular kills totais apenas dos últimos 20 rounds oficiais
+  const validKills = last20Events.filter(e => e.type === 'kill');
+  const ctTotalKills = Array.from(playerKillsMap.entries())
+    .filter(([steamID]) => ctPlayers.some(p => p.steamID === steamID))
+    .reduce((sum, [, kills]) => sum + kills, 0);
+  const ctTotalDeaths = ctPlayers.reduce((sum, p) => sum + (playerDeathsMap.get(p.steamID) || 0), 0);
+  const tTotalKills = Array.from(playerKillsMap.entries())
+    .filter(([steamID]) => tPlayers.some(p => p.steamID === steamID))
+    .reduce((sum, [, kills]) => sum + kills, 0);
+  const tTotalDeaths = tPlayers.reduce((sum, p) => sum + (playerDeathsMap.get(p.steamID) || 0), 0);
 
-  const bombEvents = events.filter(e => e.type.startsWith('bomb_'));
+  // Calcular ADR médio por time
+  const ctAvgADR = ctPlayers.length > 0
+    ? ctPlayers.reduce((sum, p) => {
+        const stats = allPlayerStats.find(s => s.steamID === p.steamID);
+        return sum + (stats?.adr || 0);
+      }, 0) / ctPlayers.length
+    : 0;
+  
+  const tAvgADR = tPlayers.length > 0
+    ? tPlayers.reduce((sum, p) => {
+        const stats = allPlayerStats.find(s => s.steamID === p.steamID);
+        return sum + (stats?.adr || 0);
+      }, 0) / tPlayers.length
+    : 0;
+
+  const bombEvents = last20Events.filter(e => e.type.startsWith('bomb_'));
   const ctBombDefuses = bombEvents.filter(e => e.type === 'bomb_defused').length;
   const tBombPlants = bombEvents.filter(e => e.type === 'bomb_planted').length;
+
+  // Nome dos times baseado no MVP de cada lado
+  const ctTeamName = ctMVP ? ctMVP.name : 'Counter-Terrorists';
+  const tTeamName = tMVP ? tMVP.name : 'Terrorists';
 
   const teams: TeamStats[] = [
     {
       team: 'CT',
+      teamName: ctTeamName,
       score: metadata.scoreCT,
       totalKills: ctTotalKills,
       totalDeaths: ctTotalDeaths,
       avgKDRatio: ctTotalDeaths > 0 ? ctTotalKills / ctTotalDeaths : ctTotalKills,
-      avgADR: 0, // Será calculado se tiver dados de dano
+      avgADR: ctAvgADR,
       bombPlants: 0,
       bombDefuses: ctBombDefuses,
       zonePerformance: zonePerformance.filter(z => z.control > 50),
     },
     {
       team: 'T',
+      teamName: tTeamName,
       score: metadata.scoreT,
       totalKills: tTotalKills,
       totalDeaths: tTotalDeaths,
       avgKDRatio: tTotalDeaths > 0 ? tTotalKills / tTotalDeaths : tTotalKills,
-      avgADR: 0,
+      avgADR: tAvgADR,
       bombPlants: tBombPlants,
       bombDefuses: 0,
       zonePerformance: zonePerformance.filter(z => z.control <= 50),
     },
   ];
 
-  // Gerar rounds detalhados
+  // Gerar rounds detalhados (apenas dos últimos 20 rounds oficiais)
   const roundEvents: Map<number, GoEvent[]> = new Map();
-  events.forEach(e => {
-    if (e.round > 0) {
+  last20Events.forEach(e => {
+    if (e.round > 0 && last20Rounds.has(e.round)) {
       if (!roundEvents.has(e.round)) {
         roundEvents.set(e.round, []);
       }
@@ -226,7 +446,12 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
     }
   });
 
-  const detailedRounds: DetailedRound[] = events
+  // Normalizar numeração dos rounds para começar em 1 (apenas visual)
+  // Para GC: se começa no round 5, o primeiro round será exibido como R1
+  // Para MM: já começa em 1, então não precisa ajustar
+  const roundOffset = firstOfficialRound - 1; // Se primeiro é 5, offset é 4
+  
+  const detailedRounds: DetailedRound[] = last20Events
     .filter(e => e.type === 'round_end')
     .map(event => {
       const roundNum = event.round;
@@ -239,7 +464,7 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
       const keyEvents: string[] = [];
       if (bombPlanted) keyEvents.push('Bomba plantada');
       if (bombDefused) keyEvents.push('Bomba desarmada');
-      keyEvents.push(`${kills} eliminação${kills !== 1 ? 'ões' : ''}`);
+      keyEvents.push(`${kills} eliminações`);
       
       // Encontrar MVP do round (mais kills)
       const roundKills = roundEventsList.filter(e => e.type === 'kill');
@@ -254,7 +479,10 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
       const winner = event.data?.winner || 'CT';
       const reason = event.data?.reason || 0;
       
-      let detail = `Round ${roundNum}: `;
+      // Calcular round normalizado para exibição (começar em 1)
+      const displayRound = roundNum - roundOffset;
+      
+      let detail = `Round ${displayRound}: `;
       if (reason === 16) detail += 'Bomba explodiu';
       else if (reason === 8) detail += 'Bomba desarmada';
       else if (reason === 1) detail += 'Terroristas eliminados';
@@ -264,7 +492,7 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
       detail += ` • ${keyEvents.join(', ')}`;
 
       return {
-        round: roundNum,
+        round: displayRound, // Usar round normalizado para exibição
         winner: winner as 'CT' | 'T',
         reason,
         time: event.time,
@@ -289,39 +517,48 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
       const zonePerf = zonePerformance.find(z => z.zone === zone);
       let pressure: 'Alta' | 'Média' | 'Baixa' = activity > 20 ? 'Alta' : activity > 10 ? 'Média' : 'Baixa';
       
+      // Identificar qual time controla a zona
+      const controllingTeam = zonePerf && zonePerf.control > 50 ? ctTeamName : tTeamName;
+      
       return {
         zone,
         pressure,
-        note: `${activity} eventos registrados${zonePerf ? ` • Controle: ${zonePerf.control > 50 ? 'CT' : 'T'} (${zonePerf.control}%)` : ''}`,
+        note: `${activity} eventos registrados${zonePerf ? ` • Controle: ${controllingTeam} (${zonePerf.control}%)` : ''}`,
       };
     });
 
-  // Radar moments melhorados
+  // Radar moments melhorados (apenas dos últimos 20 rounds)
   const radarMoments = goData.radarReplay
     ? goData.radarReplay
-        .filter((snapshot: any) => snapshot.players && snapshot.players.length > 0)
+        .filter((snapshot: any) => snapshot.players && snapshot.players.length > 0 && snapshot.round > 0 && last20Rounds.has(snapshot.round))
         .slice(0, 10)
         .map((snapshot: any) => {
           const roundEventsList = roundEvents.get(snapshot.round) || [];
           const latestKill = roundEventsList.filter((e: any) => e.type === 'kill').pop();
+          
+          // Normalizar round para exibição (começar em 1)
+          const displayRound = snapshot.round - roundOffset;
           
           let highlight = 'Posicionamento';
           let callout = '';
           
           if (latestKill) {
             highlight = `Kill: ${latestKill.data?.killer?.name || 'Unknown'} eliminou ${latestKill.data?.victim?.name || 'Unknown'}`;
-            callout = `Round ${snapshot.round}`;
+            callout = `Round ${displayRound}`;
           } else if (roundEventsList.some((e: any) => e.type === 'bomb_planted')) {
             highlight = 'Bomba plantada';
-            callout = `Round ${snapshot.round}`;
+            callout = `Round ${displayRound}`;
           } else {
-            callout = `Round ${snapshot.round}`;
+            callout = `Round ${displayRound}`;
           }
 
           const minutes = Math.floor(snapshot.time / 60);
           const seconds = Math.floor(snapshot.time % 60);
-          const phase = snapshot.round <= metadata.rounds / 3 ? 'início' as const : 
-                       snapshot.round <= metadata.rounds * 2 / 3 ? 'meio' as const : 'final' as const;
+          // Usar round normalizado para calcular fase
+          const normalizedRound = snapshot.round - roundOffset;
+          const totalRounds = last20Rounds.size;
+          const phase = normalizedRound <= totalRounds / 3 ? 'início' as const : 
+                       normalizedRound <= totalRounds * 2 / 3 ? 'meio' as const : 'final' as const;
 
           return {
             tick: snapshot.tick,
@@ -340,9 +577,9 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
         })
     : [];
 
-  // Round highlights melhorados
+  // Round highlights melhorados (apenas dos últimos 20 rounds)
   const roundHighlights = detailedRounds
-    .filter(r => r.keyEvents.length > 2 || r.winner !== metadata.scoreCT > metadata.scoreT ? 'CT' : 'T')
+    .filter(r => r.keyEvents.length > 2 || r.winner !== (metadata.scoreCT > metadata.scoreT ? 'CT' : 'T'))
     .slice(0, 8)
     .map(r => ({
       round: r.round,
@@ -355,9 +592,9 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   if (summary.mvp && summary.mvp !== 'N/A') {
     keyFindings.push(`🏆 MVP: ${summary.mvp} (Rating ${summary.rating.toFixed(2)})`);
   }
-  keyFindings.push(`⚔️ ${events.filter(e => e.type === 'kill').length} eliminações no total`);
+  keyFindings.push(`⚔️ ${validKills.length} eliminações no total (${validRounds} rounds válidos)`);
   keyFindings.push(`💣 ${tBombPlants} bomba(s) plantada(s), ${ctBombDefuses} desarmada(s)`);
-  keyFindings.push(`📊 Resultado: ${metadata.scoreCT}-${metadata.scoreT} (${metadata.scoreCT > metadata.scoreT ? 'CT' : 'T'} venceu)`);
+  keyFindings.push(`📊 Resultado: ${metadata.scoreCT}-${metadata.scoreT} (${metadata.scoreCT > metadata.scoreT ? ctTeamName : tTeamName} venceu)`);
   
   if (mostKills) {
     keyFindings.push(`🔫 Mais kills: ${mostKills.name} (${mostKills.kills})`);
@@ -365,11 +602,14 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   if (mostAssists) {
     keyFindings.push(`🤝 Mais assists: ${mostAssists.name} (${mostAssists.assists})`);
   }
+  if (mostDeaths) {
+    keyFindings.push(`💀 Mais mortes: ${mostDeaths.name} (${mostDeaths.deaths})`);
+  }
 
   // Recomendações melhoradas
   const recommendations: string[] = [];
   if (teams[0].avgKDRatio < teams[1].avgKDRatio) {
-    recommendations.push('Time CT precisa melhorar controle de duplas e trocas');
+    recommendations.push(`${teams[0].teamName} precisa melhorar controle de duplas e trocas`);
   }
   if (tBombPlants > ctBombDefuses * 2) {
     recommendations.push('Focar em retakes e defusas - muitas bombas plantadas sem conversão');
@@ -415,15 +655,15 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
 
   // Summary
   const summaryText = `Partida no mapa ${metadata.map || 'desconhecido'} com duração de ${metadata.duration}. 
-    ${metadata.rounds} rounds disputados, resultado final: ${metadata.scoreCT}-${metadata.scoreT}. 
-    ${events.filter(e => e.type === 'kill').length} eliminações registradas. 
+    ${validRounds} rounds válidos disputados, resultado final: ${metadata.scoreCT}-${metadata.scoreT}. 
+    ${validKills.length} eliminações registradas. 
     ${teams.find(t => t.team === 'T')?.bombPlants || 0} bombas plantadas e ${teams.find(t => t.team === 'CT')?.bombDefuses || 0} desarmadas.`;
 
   return {
     type,
     map: metadata.map || 'unknown',
     duration: metadata.duration,
-    rounds: metadata.rounds,
+    rounds: validRounds,
     mvp: summary.mvp || 'N/A',
     rating: summary.rating,
     score: `${metadata.scoreCT}-${metadata.scoreT}`,
@@ -441,7 +681,7 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
       averageSpend: 3500,
       economyStrength: metadata.rounds > 15 ? 'Economia estável ao longo da partida' : 'Economia flutuante',
       swings: [
-        `Total de rounds: ${metadata.rounds}`,
+        `Total de rounds válidos: ${validRounds}`,
         `Bombas plantadas: ${tBombPlants}`,
         `Bombas desarmadas: ${ctBombDefuses}`,
       ],
@@ -452,9 +692,14 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
     topPerformers: {
       mostKills,
       mostAssists,
+      mostDeaths,
       mostDamage,
       bestKDRatio,
     },
     detailedRounds,
+    // Campos de warmup/knife detection
+    warmupRounds: metadata.warmupRounds,
+    knifeRound: metadata.knifeRound,
+    source: metadata.source,
   };
 };
