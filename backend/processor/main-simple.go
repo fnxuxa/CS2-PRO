@@ -23,19 +23,24 @@ type SimpleAnalysis struct {
 }
 
 type MatchMetadata struct {
-	Map      string `json:"map"`
-	Duration string `json:"duration"`
-	Rounds   int    `json:"rounds"`
-	ScoreT   int    `json:"scoreT"`
-	ScoreCT  int    `json:"scoreCT"`
+	Map         string `json:"map"`
+	Duration    string `json:"duration"`
+	Rounds      int    `json:"rounds"`
+	ScoreT      int    `json:"scoreT"`
+	ScoreCT     int    `json:"scoreCT"`
+	WarmupRounds int  `json:"warmupRounds"` // Número de rounds de aquecimento detectados
+	KnifeRound    bool `json:"knifeRound"`   // Se tem round de faca
+	Source        string `json:"source"`     // "GC" (Gamers Club) ou "Valve" (Matchmaking)
 }
 
 type DetailedEvent struct {
-	Type   string                 `json:"type"`
-	Time   float64                `json:"time"`
-	Tick   int                    `json:"tick"`
-	Round  int                    `json:"round"`
-	Data   map[string]interface{} `json:"data,omitempty"`
+	Type      string                 `json:"type"`
+	Time      float64                `json:"time"`
+	Tick      int                    `json:"tick"`
+	Round     int                    `json:"round"`
+	IsWarmup  bool                   `json:"isWarmup,omitempty"`  // Se o evento é de round de aquecimento
+	IsKnife   bool                   `json:"isKnife,omitempty"`   // Se o evento é de round de faca
+	Data      map[string]interface{} `json:"data,omitempty"`
 }
 
 type Position struct {
@@ -167,8 +172,19 @@ func main() {
 	heatmapPoints := make(map[string]*HeatmapPoint) // "x,y,z,type" -> point
 	var roundCount int
 	var currentRound int
+	var officialRoundStart int = -1 // Primeiro round oficial (após warmup)
 	lastSnapshotTick := 0
 	snapshotInterval := 512 // A cada 512 ticks (~8 segundos em 64 tick) - reduzir frequência
+	
+	// Detecção de rounds especiais
+	warmupRounds := make(map[int]bool)  // Rounds marcados como warmup
+	knifeRounds := make(map[int]bool)    // Rounds marcados como knife
+	roundKills := make(map[int]int)     // Kills por round
+	roundKnifeKills := make(map[int]int) // Kills com faca por round
+	roundScores := make(map[int]map[string]int) // Score por round {CT: X, T: Y}
+	
+	// Detectar se é GC ou Valve
+	isGC := false // Será detectado durante parsing
 
 	// Função auxiliar para obter posição
 	getPosition := func(p *common.Player) Position {
@@ -290,19 +306,53 @@ func main() {
 			timeSeconds = p.CurrentTime().Seconds()
 		}
 
+		// Inicializar tracking do round
+		roundKills[currentRound] = 0
+		roundKnifeKills[currentRound] = 0
+		roundScores[currentRound] = map[string]int{"CT": 0, "T": 0}
+		
+		// Verificar score atual para detectar warmup
+		ctScore := 0
+		tScore := 0
+		if gs != nil {
+			if gs.TeamCounterTerrorists() != nil {
+				ctScore = gs.TeamCounterTerrorists().Score()
+			}
+			if gs.TeamTerrorists() != nil {
+				tScore = gs.TeamTerrorists().Score()
+			}
+		}
+		roundScores[currentRound]["CT"] = ctScore
+		roundScores[currentRound]["T"] = tScore
+
+		// Round 0 é quase sempre warmup/aquecimento
+		isWarmupRound := currentRound == 0
+		
+		// Detectar se é GC: geralmente tem mais rounds iniciais com score 0-0
+		if currentRound <= 4 && ctScore == 0 && tScore == 0 {
+			isGC = true
+		}
+
 		event := DetailedEvent{
-			Type:  "round_start",
-			Time:  timeSeconds,
-			Tick:  tick,
-			Round: currentRound,
+			Type:     "round_start",
+			Time:     timeSeconds,
+			Tick:     tick,
+			Round:    currentRound,
+			IsWarmup: isWarmupRound,
 			Data: map[string]interface{}{
 				"round": currentRound,
 			},
 		}
 		analysis.Events = append(analysis.Events, event)
+		
+		if isWarmupRound {
+			warmupRounds[currentRound] = true
+		}
 
-		// Snapshot do radar apenas no início do round
-		createRadarSnapshot()
+		// Snapshot do radar apenas no início do round oficial
+		if !isWarmupRound {
+			createRadarSnapshot()
+		}
 	})
 
 	// Evento: RoundEnd
@@ -329,11 +379,50 @@ func main() {
 			timeSeconds = p.CurrentTime().Seconds()
 		}
 
+		// Detectar se é round de faca (muitos kills com faca)
+		knifeKills := roundKnifeKills[currentRound]
+		totalKills := roundKills[currentRound]
+		isKnifeRound := knifeKills >= 3 && totalKills > 0 && float64(knifeKills)/float64(totalKills) > 0.5
+		
+		// Verificar se score não mudou (indicativo de warmup)
+		gs2 := p.GameState()
+		currentCTScore := 0
+		currentTScore := 0
+		if gs2 != nil {
+			if gs2.TeamCounterTerrorists() != nil {
+				currentCTScore = gs2.TeamCounterTerrorists().Score()
+			}
+			if gs2.TeamTerrorists() != nil {
+				currentTScore = gs2.TeamTerrorists().Score()
+			}
+		}
+		
+		prevScore := roundScores[currentRound]
+		isWarmupRound := warmupRounds[currentRound]
+		// Se score não mudou após round end, pode ser warmup
+		if !isWarmupRound && prevScore != nil {
+			if prevScore["CT"] == currentCTScore && prevScore["T"] == currentTScore && totalKills > 0 {
+				isWarmupRound = true
+				warmupRounds[currentRound] = true
+			}
+		}
+		
+		if isKnifeRound {
+			knifeRounds[currentRound] = true
+		}
+		
+		// Marcar primeiro round oficial (não warmup, não knife)
+		if officialRoundStart == -1 && !isWarmupRound && !isKnifeRound {
+			officialRoundStart = currentRound
+		}
+
 		event := DetailedEvent{
-			Type:  "round_end",
-			Time:  timeSeconds,
-			Tick:  tick,
-			Round: currentRound,
+			Type:     "round_end",
+			Time:     timeSeconds,
+			Tick:     tick,
+			Round:    currentRound,
+			IsWarmup: isWarmupRound,
+			IsKnife:  isKnifeRound,
 			Data: map[string]interface{}{
 				"round":  currentRound,
 				"winner": winner,
@@ -342,8 +431,10 @@ func main() {
 		}
 		analysis.Events = append(analysis.Events, event)
 
-		// Snapshot do radar apenas no final do round
-		createRadarSnapshot()
+		// Snapshot do radar apenas no final do round oficial
+		if !isWarmupRound && !isKnifeRound {
+			createRadarSnapshot()
+		}
 	})
 
 	// Evento: Kill (com posições completas)
@@ -365,20 +456,6 @@ func main() {
 			timeSeconds = p.CurrentTime().Seconds()
 		}
 
-		// Atualizar stats
-		if e.Killer != nil {
-			updatePlayer(e.Killer, playerMap, true, false, false)
-			if e.IsHeadshot {
-				updatePlayerStats(e.Killer, playerStats, true, false, false)
-			}
-		}
-		if e.Victim != nil {
-			updatePlayer(e.Victim, playerMap, false, true, false)
-		}
-		if e.Assister != nil {
-			updatePlayer(e.Assister, playerMap, false, false, true)
-		}
-
 		weaponStr := "unknown"
 		if e.Weapon != nil {
 			weaponStr = e.Weapon.Type.String()
@@ -395,11 +472,26 @@ func main() {
 			addHeatmapPoint(victimPos, "death")
 		}
 
+		// Contar kills por round
+		roundKills[currentRound] = roundKills[currentRound] + 1
+		
+		// Verificar se é kill com faca
+		isKnife := weaponStr == "Knife" || weaponStr == "knife" || weaponStr == "Bayonet"
+		if isKnife {
+			roundKnifeKills[currentRound] = roundKnifeKills[currentRound] + 1
+		}
+		
+		// Verificar se é warmup ou knife round
+		isWarmupRound := warmupRounds[currentRound]
+		isKnifeRound := knifeRounds[currentRound]
+
 		event := DetailedEvent{
-			Type:  "kill",
-			Time:  timeSeconds,
-			Tick:  tick,
-			Round: currentRound,
+			Type:     "kill",
+			Time:     timeSeconds,
+			Tick:     tick,
+			Round:    currentRound,
+			IsWarmup: isWarmupRound,
+			IsKnife:  isKnifeRound,
 			Data: map[string]interface{}{
 				"killer": map[string]interface{}{
 					"name":     getName(e.Killer),
@@ -417,6 +509,23 @@ func main() {
 			},
 		}
 		analysis.Events = append(analysis.Events, event)
+		
+		// Só atualizar stats se não for warmup ou knife round
+		if !isWarmupRound && !isKnifeRound {
+			// Atualizar stats normalmente
+			if e.Killer != nil {
+				updatePlayer(e.Killer, playerMap, true, false, false)
+				if e.IsHeadshot {
+					updatePlayerStats(e.Killer, playerStats, true, false, false)
+				}
+			}
+			if e.Victim != nil {
+				updatePlayer(e.Victim, playerMap, false, true, false)
+			}
+			if e.Assister != nil {
+				updatePlayer(e.Assister, playerMap, false, false, true)
+			}
+		}
 	})
 
 	// Evento: PlayerHurt (apenas atualizar stats, sem criar evento)
@@ -428,7 +537,11 @@ func main() {
 		}()
 
 		// Apenas atualizar dano para estatísticas, sem criar evento
-		if e.Attacker != nil && e.Attacker.IsAlive() {
+		// Só contar se não for warmup ou knife round
+		isWarmupRound := warmupRounds[currentRound]
+		isKnifeRound := knifeRounds[currentRound]
+		
+		if e.Attacker != nil && e.Attacker.IsAlive() && !isWarmupRound && !isKnifeRound {
 			updatePlayerDamage(e.Attacker, playerStats, e.HealthDamage)
 		}
 	})
@@ -626,12 +739,39 @@ func main() {
 		scoreCT = gs.TeamCounterTerrorists().Score()
 	}
 
+	// Contar rounds oficiais (sem warmup e knife)
+	officialRounds := 0
+	warmupCount := 0
+	hasKnifeRound := false
+	for r := 0; r <= currentRound; r++ {
+		if warmupRounds[r] {
+			warmupCount++
+		} else if knifeRounds[r] {
+			hasKnifeRound = true
+		} else {
+			officialRounds++
+		}
+	}
+	
+	// Se não detectou warmup mas tem rounds iniciais com score 0-0, provavelmente é warmup
+	if warmupCount == 0 && currentRound > 10 && officialRoundStart > 0 {
+		warmupCount = officialRoundStart - 1
+	}
+	
+	source := "Valve"
+	if isGC {
+		source = "GC"
+	}
+
 	analysis.Metadata = MatchMetadata{
-		Map:      mapName,
-		Duration: formatDuration(duration),
-		Rounds:   roundCount,
-		ScoreT:   scoreT,
-		ScoreCT:  scoreCT,
+		Map:          mapName,
+		Duration:     formatDuration(duration),
+		Rounds:       officialRounds,
+		ScoreT:       scoreT,
+		ScoreCT:      scoreCT,
+		WarmupRounds: warmupCount,
+		KnifeRound:   hasKnifeRound,
+		Source:       source,
 	}
 
 	// Converter heatmap points para array
@@ -645,7 +785,7 @@ func main() {
 	}
 
 	if targetSteamID != 0 {
-		targetPlayer := findPlayerAnalysis(targetSteamID, playerMap, playerStats, roundCount)
+		targetPlayer := findPlayerAnalysis(targetSteamID, playerMap, playerStats, officialRounds)
 		if targetPlayer != nil {
 			analysis.TargetPlayer = targetPlayer
 		}
