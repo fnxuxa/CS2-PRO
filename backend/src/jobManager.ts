@@ -3,6 +3,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { AnalysisJob, AnalysisType, JobStatusResponse, UploadInfo, AnalysisData } from './types';
+import { convertGoDataToAnalysisData } from './goDataConverter';
 
 const execFileAsync = promisify(execFile);
 
@@ -117,10 +118,19 @@ const finalizeJob = async (jobId: string) => {
       throw new Error('Informações de upload não encontradas');
     }
 
-    // Caminho do binário Go (assumindo que será compilado)
+    // Caminho do binário Go - está em backend/processor/
     // No Windows será .exe, no Linux/Mac será sem extensão
     const processorName = process.platform === 'win32' ? 'demo-processor.exe' : 'demo-processor';
-    const processorPath = path.resolve(process.cwd(), 'processor', processorName);
+    
+    // __dirname em TypeScript compilado aponta para dist/, então subimos para backend/processor
+    // Em desenvolvimento, __dirname aponta para src/, então também funciona
+    const processorPath = path.resolve(__dirname, '..', 'processor', processorName);
+    
+    // Verificar se o arquivo existe antes de executar
+    const fs = await import('fs');
+    if (!fs.existsSync(processorPath)) {
+      throw new Error(`Processador Go não encontrado em: ${processorPath}. Certifique-se de que o arquivo ${processorName} existe.`);
+    }
     
     // Tentar executar o processador Go
     // Args: [demo_path, steamId?] - steamId é opcional
@@ -133,12 +143,20 @@ const finalizeJob = async (jobId: string) => {
     try {
       const { stdout } = await execFileAsync(processorPath, args, {
         timeout: 300000, // 5 minutos timeout
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        maxBuffer: 50 * 1024 * 1024, // 50MB buffer (aumentado para JSON grande)
       });
 
       // Parse do JSON retornado pelo Go
-      const analysisData: AnalysisData = JSON.parse(stdout);
+      const goData = JSON.parse(stdout);
+      
+      // Converter dados do Go para o formato AnalysisData esperado pelo frontend
+      const analysisData: AnalysisData = convertGoDataToAnalysisData(goData, job.type);
+      
+      // Armazenar também os dados brutos do Go para uso no chatbot
+      (job as any).rawGoData = goData;
+      
       job.analysis = analysisData;
+      console.log(`✅ Análise concluída: ${goData.events.length} eventos processados`);
     } catch (goError: any) {
       // Se o binário Go não existir ou der erro, usar mock como fallback
       console.warn('Erro ao executar processador Go, usando mock:', goError.message);

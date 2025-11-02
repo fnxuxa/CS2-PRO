@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Storage (uploads, etc)
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/*.dem
+backend/storage/uploads/*.dem
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+
+# Demo files (muito grandes para git)
+*.dem
+backend/processor/*.dem
+
+# Go binaries (incluir no git para funcionar imediatamente)
+# Descomente a linha abaixo se NÃO quiser incluir o .exe no git
+# backend/processor/demo-processor.exe
+# backend/processor/demo-processor
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+output.json
+output-reduced.json
+backend/processor/output*.json
+

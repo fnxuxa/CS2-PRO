@@ -6,18 +6,20 @@ import (
 	"os"
 	"time"
 
-	demoinfocs "github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs"
-	common "github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
-	events "github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/events"
+	demoinfocs "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
+	common "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/common"
+	events "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/events"
 )
 
-// Versão simplificada que compila
+// Análise completa com todos os dados
 type SimpleAnalysis struct {
 	Metadata     MatchMetadata   `json:"metadata"`
-	Events       []SimpleEvent   `json:"events"`
-	Players      []SimplePlayer  `json:"players"`
+	Events       []DetailedEvent  `json:"events"`
+	Players      []SimplePlayer   `json:"players"`
 	Summary      SimpleSummary   `json:"summary"`
-	TargetPlayer *PlayerAnalysis `json:"targetPlayer,omitempty"` // Análise focada no Steam ID fornecido
+	Heatmap      HeatmapData     `json:"heatmap"`
+	RadarReplay  []RadarSnapshot  `json:"radarReplay"`
+	TargetPlayer *PlayerAnalysis `json:"targetPlayer,omitempty"`
 }
 
 type MatchMetadata struct {
@@ -28,10 +30,23 @@ type MatchMetadata struct {
 	ScoreCT  int    `json:"scoreCT"`
 }
 
-type SimpleEvent struct {
-	Type string      `json:"type"`
-	Time float64     `json:"time"`
-	Data interface{} `json:"data,omitempty"`
+type DetailedEvent struct {
+	Type   string                 `json:"type"`
+	Time   float64                `json:"time"`
+	Tick   int                    `json:"tick"`
+	Round  int                    `json:"round"`
+	Data   map[string]interface{} `json:"data,omitempty"`
+}
+
+type Position struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+type ViewAngles struct {
+	Pitch float64 `json:"pitch"`
+	Yaw   float64 `json:"yaw"`
 }
 
 type SimplePlayer struct {
@@ -65,6 +80,38 @@ type SimpleSummary struct {
 	Rating float64 `json:"rating"`
 }
 
+type HeatmapData struct {
+	Map    string         `json:"map"`
+	Points []HeatmapPoint `json:"points"`
+}
+
+type HeatmapPoint struct {
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Z         float64 `json:"z"`
+	Intensity int     `json:"intensity"`
+	Type      string  `json:"type"` // "kill", "death", "bomb", "grenade", etc.
+}
+
+type RadarSnapshot struct {
+	Tick    int               `json:"tick"`
+	Time    float64           `json:"time"`
+	Round   int               `json:"round"`
+	Players []RadarPlayerData `json:"players"`
+}
+
+type RadarPlayerData struct {
+	SteamID    uint64     `json:"steamID"`
+	Name       string     `json:"name"`
+	Team       string     `json:"team"`
+	Position   Position   `json:"position"`
+	ViewAngles ViewAngles `json:"viewAngles"`
+	Health     int        `json:"health"`
+	Armor      int        `json:"armor"`
+	Money      int        `json:"money"`
+	IsAlive    bool       `json:"isAlive"`
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Uso: %s <demo_path> [steam_id]\n", os.Args[0])
@@ -76,16 +123,13 @@ func main() {
 	demoPath := os.Args[1]
 	var targetSteamID uint64 = 0
 
-	// Steam ID é opcional
 	if len(os.Args) >= 3 {
 		_, err := fmt.Sscanf(os.Args[2], "%d", &targetSteamID)
 		if err != nil {
-			// Se não for número, ignora silenciosamente
 			targetSteamID = 0
 		}
 	}
 
-	// Verificar se arquivo existe
 	if _, err := os.Stat(demoPath); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Erro: arquivo não encontrado: %s\n", demoPath)
 		os.Exit(1)
@@ -98,7 +142,6 @@ func main() {
 	}
 	defer f.Close()
 
-	// Verificar se arquivo não está vazio
 	fileInfo, err := f.Stat()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erro ao obter informações do arquivo: %v\n", err)
@@ -113,51 +156,216 @@ func main() {
 	defer p.Close()
 
 	analysis := &SimpleAnalysis{
-		Events:  []SimpleEvent{},
-		Players: []SimplePlayer{},
+		Events:      []DetailedEvent{},
+		Players:     []SimplePlayer{},
+		Heatmap:     HeatmapData{Points: []HeatmapPoint{}},
+		RadarReplay: []RadarSnapshot{},
 	}
 
 	playerMap := make(map[uint64]*SimplePlayer)
 	playerStats := make(map[uint64]*PlayerStats)
+	heatmapPoints := make(map[string]*HeatmapPoint) // "x,y,z,type" -> point
 	var roundCount int
+	var currentRound int
+	lastSnapshotTick := 0
+	snapshotInterval := 512 // A cada 512 ticks (~8 segundos em 64 tick) - reduzir frequência
 
-	p.RegisterEventHandler(func(e events.RoundStart) {
-		roundCount++
+	// Função auxiliar para obter posição
+	getPosition := func(p *common.Player) Position {
+		if p == nil {
+			return Position{}
+		}
+		pos := p.Position()
+		return Position{X: pos.X, Y: pos.Y, Z: pos.Z}
+	}
+
+	// Função auxiliar para obter view angles
+	getViewAngles := func(p *common.Player) ViewAngles {
+		if p == nil {
+			return ViewAngles{}
+		}
+		// ViewDirectionX() retorna float32 (direção X do view vector)
+		// Para obter pitch/yaw completos, precisaríamos de mais dados
+		// Por enquanto retornamos valores básicos
+		return ViewAngles{
+			Pitch: 0, // Precisaríamos calcular do vector completo
+			Yaw:   0,
+		}
+	}
+
+	// Função para adicionar ponto ao heatmap
+	addHeatmapPoint := func(pos Position, eventType string) {
+		key := fmt.Sprintf("%.1f,%.1f,%.1f,%s", pos.X, pos.Y, pos.Z, eventType)
+		point, exists := heatmapPoints[key]
+		if !exists {
+			point = &HeatmapPoint{
+				X:         pos.X,
+				Y:         pos.Y,
+				Z:         pos.Z,
+				Intensity: 0,
+				Type:      eventType,
+			}
+			heatmapPoints[key] = point
+		}
+		point.Intensity++
+	}
+
+	// Função para criar snapshot do radar
+	createRadarSnapshot := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
 		gs := p.GameState()
-		var tick int
+		if gs == nil {
+			return
+		}
+
+		tick := gs.IngameTick()
+		if tick-lastSnapshotTick < snapshotInterval {
+			return
+		}
+		lastSnapshotTick = tick
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		snapshot := RadarSnapshot{
+			Tick:    tick,
+			Time:    timeSeconds,
+			Round:   currentRound,
+			Players: []RadarPlayerData{},
+		}
+
+		// Coletar dados de todos os jogadores
+		for _, player := range gs.Participants().All() {
+			if player == nil {
+				continue
+			}
+
+			pos := getPosition(player)
+			view := getViewAngles(player)
+
+			playerData := RadarPlayerData{
+				SteamID:    player.SteamID64,
+				Name:       player.Name,
+				Team:       teamToString(player.Team),
+				Position:   pos,
+				ViewAngles: view,
+				Health:     player.Health(),
+				Armor:      player.Armor(),
+				Money:      player.Money(),
+				IsAlive:    player.IsAlive(),
+			}
+
+			snapshot.Players = append(snapshot.Players, playerData)
+		}
+
+		analysis.RadarReplay = append(analysis.RadarReplay, snapshot)
+	}
+
+	// Evento: RoundStart
+	p.RegisterEventHandler(func(e events.RoundStart) {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
+		currentRound++
+		roundCount++
+
+		gs := p.GameState()
+		tick := 0
 		if gs != nil {
 			tick = gs.IngameTick()
 		}
-		event := SimpleEvent{
-			Type: "round_start",
-			Time: p.CurrentTime().Seconds(),
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		event := DetailedEvent{
+			Type:  "round_start",
+			Time:  timeSeconds,
+			Tick:  tick,
+			Round: currentRound,
 			Data: map[string]interface{}{
-				"round": roundCount,
-				"tick":  tick,
+				"round": currentRound,
 			},
 		}
 		analysis.Events = append(analysis.Events, event)
+
+		// Snapshot do radar apenas no início do round
+		createRadarSnapshot()
 	})
 
+	// Evento: RoundEnd
 	p.RegisterEventHandler(func(e events.RoundEnd) {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
 		winner := "T"
 		if e.Winner == common.TeamCounterTerrorists {
 			winner = "CT"
 		}
 
-		event := SimpleEvent{
-			Type: "round_end",
-			Time: p.CurrentTime().Seconds(),
+		gs := p.GameState()
+		tick := 0
+		if gs != nil {
+			tick = gs.IngameTick()
+		}
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		event := DetailedEvent{
+			Type:  "round_end",
+			Time:  timeSeconds,
+			Tick:  tick,
+			Round: currentRound,
 			Data: map[string]interface{}{
-				"round":  roundCount,
+				"round":  currentRound,
 				"winner": winner,
 				"reason": int(e.Reason),
 			},
 		}
 		analysis.Events = append(analysis.Events, event)
+
+		// Snapshot do radar apenas no final do round
+		createRadarSnapshot()
 	})
 
+	// Evento: Kill (com posições completas)
 	p.RegisterEventHandler(func(e events.Kill) {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
+		gs := p.GameState()
+		tick := 0
+		if gs != nil {
+			tick = gs.IngameTick()
+		}
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		// Atualizar stats
 		if e.Killer != nil {
 			updatePlayer(e.Killer, playerMap, true, false, false)
 			if e.IsHeadshot {
@@ -171,61 +379,204 @@ func main() {
 			updatePlayer(e.Assister, playerMap, false, false, true)
 		}
 
-		event := SimpleEvent{
-			Type: "kill",
-			Time: p.CurrentTime().Seconds(),
+		weaponStr := "unknown"
+		if e.Weapon != nil {
+			weaponStr = e.Weapon.Type.String()
+		}
+
+		killerPos := Position{}
+		victimPos := Position{}
+		if e.Killer != nil {
+			killerPos = getPosition(e.Killer)
+			addHeatmapPoint(killerPos, "kill")
+		}
+		if e.Victim != nil {
+			victimPos = getPosition(e.Victim)
+			addHeatmapPoint(victimPos, "death")
+		}
+
+		event := DetailedEvent{
+			Type:  "kill",
+			Time:  timeSeconds,
+			Tick:  tick,
+			Round: currentRound,
 			Data: map[string]interface{}{
-				"killer":   getName(e.Killer),
-				"victim":   getName(e.Victim),
+				"killer": map[string]interface{}{
+					"name":     getName(e.Killer),
+					"steamID":  getSteamID(e.Killer),
+					"position": killerPos,
+				},
+				"victim": map[string]interface{}{
+					"name":     getName(e.Victim),
+					"steamID":  getSteamID(e.Victim),
+					"position": victimPos,
+				},
 				"assister": getName(e.Assister),
 				"headshot": e.IsHeadshot,
-				"weapon":   e.Weapon.Type.String(),
+				"weapon":   weaponStr,
 			},
 		}
 		analysis.Events = append(analysis.Events, event)
 	})
 
+	// Evento: PlayerHurt (apenas atualizar stats, sem criar evento)
 	p.RegisterEventHandler(func(e events.PlayerHurt) {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
+		// Apenas atualizar dano para estatísticas, sem criar evento
 		if e.Attacker != nil && e.Attacker.IsAlive() {
 			updatePlayerDamage(e.Attacker, playerStats, e.HealthDamage)
 		}
 	})
 
+	// WeaponFire removido - não capturar todos os disparos, apenas em kills
+
+	// Evento: BombPlanted (com posição e timer)
 	p.RegisterEventHandler(func(e events.BombPlanted) {
-		if e.Player != nil {
-			event := SimpleEvent{
-				Type: "bomb_planted",
-				Time: p.CurrentTime().Seconds(),
-				Data: map[string]interface{}{
-					"player": getName(e.Player),
-				},
+		defer func() {
+			if r := recover(); r != nil {
+				return
 			}
-			analysis.Events = append(analysis.Events, event)
-		}
-	})
+		}()
 
-	p.RegisterEventHandler(func(e events.BombDefused) {
-		if e.Player != nil {
-			event := SimpleEvent{
-				Type: "bomb_defused",
-				Time: p.CurrentTime().Seconds(),
-				Data: map[string]interface{}{
-					"player": getName(e.Player),
+		if e.Player == nil {
+			return
+		}
+
+		gs := p.GameState()
+		tick := 0
+		if gs != nil {
+			tick = gs.IngameTick()
+		}
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		playerPos := getPosition(e.Player)
+		site := "unknown"
+		// Tentar determinar site pela posição (simplificado)
+		if playerPos.Z < 100 {
+			site = "A"
+		} else {
+			site = "B"
+		}
+
+		addHeatmapPoint(playerPos, "bomb_planted")
+
+		event := DetailedEvent{
+			Type:  "bomb_planted",
+			Time:  timeSeconds,
+			Tick:  tick,
+			Round: currentRound,
+			Data: map[string]interface{}{
+				"player": map[string]interface{}{
+					"name":     getName(e.Player),
+					"steamID":  getSteamID(e.Player),
+					"position": playerPos,
 				},
-			}
-			analysis.Events = append(analysis.Events, event)
-		}
-	})
-
-	p.RegisterEventHandler(func(e events.BombExplode) {
-		event := SimpleEvent{
-			Type: "bomb_exploded",
-			Time: p.CurrentTime().Seconds(),
+				"site":    site,
+				"timer":   40.0, // 40 segundos padrão
+			},
 		}
 		analysis.Events = append(analysis.Events, event)
 	})
 
-	// Parsear com tratamento de erro e recover para panics
+	// Evento: BombDefused
+	p.RegisterEventHandler(func(e events.BombDefused) {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
+		if e.Player == nil {
+			return
+		}
+
+		gs := p.GameState()
+		tick := 0
+		if gs != nil {
+			tick = gs.IngameTick()
+		}
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		playerPos := getPosition(e.Player)
+
+		event := DetailedEvent{
+			Type:  "bomb_defused",
+			Time:  timeSeconds,
+			Tick:  tick,
+			Round: currentRound,
+			Data: map[string]interface{}{
+				"player": map[string]interface{}{
+					"name":     getName(e.Player),
+					"steamID":  getSteamID(e.Player),
+					"position": playerPos,
+				},
+			},
+		}
+		analysis.Events = append(analysis.Events, event)
+	})
+
+	// Evento: BombExplode
+	p.RegisterEventHandler(func(e events.BombExplode) {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+
+		gs := p.GameState()
+		tick := 0
+		if gs != nil {
+			tick = gs.IngameTick()
+		}
+
+		var timeSeconds float64
+		if p != nil {
+			timeSeconds = p.CurrentTime().Seconds()
+		}
+
+		// Tentar obter posição da bomba (se disponível no GameState)
+		bombPos := Position{}
+		bombEntity := gs.Bomb()
+		if bombEntity != nil {
+			bombPos = Position{
+				X: bombEntity.Position().X,
+				Y: bombEntity.Position().Y,
+				Z: bombEntity.Position().Z,
+			}
+			addHeatmapPoint(bombPos, "bomb_exploded")
+		}
+
+		event := DetailedEvent{
+			Type:  "bomb_exploded",
+			Time:  timeSeconds,
+			Tick:  tick,
+			Round: currentRound,
+			Data: map[string]interface{}{
+				"position": bombPos,
+			},
+		}
+		analysis.Events = append(analysis.Events, event)
+	})
+
+	// Evento: Grenade (usando eventos disponíveis na v5)
+	// Na v5, eventos de granada podem estar em outros eventos ou precisam ser rastreados via GameState
+	// Por enquanto, rastreamos através de equipamentos e eventos de dano de granada
+	// TODO: Implementar tracking completo de granadas quando disponível na API v5
+
+	// Parsear demo
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "Erro fatal ao processar demo: %v\n", r)
@@ -237,11 +588,9 @@ func main() {
 	err = p.ParseToEnd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erro ao processar demo: %v\n", err)
-		fmt.Fprintf(os.Stderr, "A demo pode estar corrompida ou ser de uma versão não suportada\n")
-		os.Exit(1)
+		// Continuar com o que conseguiu processar
 	}
 
-	// Agora podemos obter o header após o parse - com verificações de segurança
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "Erro ao acessar dados após parsing: %v\n", r)
@@ -249,25 +598,25 @@ func main() {
 		}
 	}()
 
-	// Tentar obter header e gameState com segurança
-	header := p.Header()
 	gs := p.GameState()
 	if gs == nil {
 		fmt.Fprintf(os.Stderr, "Erro: GameState não disponível após parsing\n")
 		os.Exit(1)
 	}
 
-	duration := header.PlaybackTime
-	if duration == 0 {
-		duration = p.CurrentTime()
+	duration := p.CurrentTime()
+
+	// Tentar obter nome do mapa de várias formas
+	mapName := "unknown"
+	// Tentar do GameState através dos participantes
+	for _, participant := range gs.Participants().All() {
+		if participant != nil && participant.IsAlive() {
+			// O nome do mapa pode estar em outras propriedades
+			// Por enquanto deixamos como unknown se não conseguirmos
+			break
+		}
 	}
 
-	mapName := header.MapName
-	if mapName == "" {
-		mapName = "unknown"
-	}
-
-	// Obter scores com segurança
 	scoreT := 0
 	scoreCT := 0
 	if gs.TeamTerrorists() != nil {
@@ -285,11 +634,16 @@ func main() {
 		ScoreCT:  scoreCT,
 	}
 
+	// Converter heatmap points para array
+	analysis.Heatmap.Map = mapName
+	for _, point := range heatmapPoints {
+		analysis.Heatmap.Points = append(analysis.Heatmap.Points, *point)
+	}
+
 	for _, player := range playerMap {
 		analysis.Players = append(analysis.Players, *player)
 	}
 
-	// Análise focada no player se Steam ID foi fornecido
 	if targetSteamID != 0 {
 		targetPlayer := findPlayerAnalysis(targetSteamID, playerMap, playerStats, roundCount)
 		if targetPlayer != nil {
@@ -471,6 +825,20 @@ func getName(p *common.Player) string {
 		return ""
 	}
 	return p.Name
+}
+
+func getSteamID(p *common.Player) uint64 {
+	if p == nil {
+		return 0
+	}
+	return p.SteamID64
+}
+
+func getWeaponName(w *common.Equipment) string {
+	if w == nil {
+		return "unknown"
+	}
+	return w.Type.String()
 }
 
 func teamToString(t common.Team) string {

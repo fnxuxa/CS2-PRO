@@ -1,4 +1,5 @@
 import { AnalysisJob, UploadInfo } from './types';
+import { generateAIInsights } from './aiInsights';
 
 const stageMessages = [
   'fazendo parsing inicial',
@@ -84,9 +85,23 @@ Envie novamente ou use outra demo.`;
   }
 
   const analysis = job.analysis;
+  const rawGoData = (job as any).rawGoData;
 
   if (!analysis) {
     return '⚠️ A análise final ainda não está disponível. Atualize a página ou tente novamente em alguns segundos.';
+  }
+
+  // Se tiver dados reais do Go, usar IA para análise mais profunda
+  if (rawGoData && (lower.includes('analise') || lower.includes('insights') || lower.includes('o que') || lower.includes('como'))) {
+    try {
+      const aiResponse = generateAIInsights(message, rawGoData, analysis);
+      if (aiResponse) {
+        return aiResponse;
+      }
+    } catch (error) {
+      console.warn('Erro ao gerar insights de IA:', error);
+      // Continua com respostas padrão se a IA falhar
+    }
   }
 
   if (lower.includes('heatmap')) {
