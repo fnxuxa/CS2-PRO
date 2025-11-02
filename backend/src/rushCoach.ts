@@ -29,7 +29,7 @@ export const generateRushResponse = ({ message, upload, job }: RushContext): str
 
   if (lower.includes('status')) {
     if (!job) {
-      return '📥 Demo recebida! Agora escolha **"player"** ou **"team"** para iniciar a análise.';
+      return '📥 Demo recebida! Digite seu **Steam ID64** no campo acima e clique em **Iniciar Análise** para começar.';
     }
 
     if (job.status === 'processing') {
@@ -47,15 +47,14 @@ Etapa atual: ${stage}.`;
       return '✅ Análise pronta! Abra o painel de resultados para revisar heatmap, radar 2D e plano de ação.';
     }
 
-    return '🚦 A análise ainda não foi iniciada. Clique em **Análise Individual** ou **Análise de Time** para começar.';
+    return '🚦 A análise ainda não foi iniciada. Digite seu **Steam ID64** e clique em **Iniciar Análise** para começar.';
   }
 
   if (lower.includes('ajuda') || lower.includes('help')) {
     return `💬 **RUSH - coach IA**
 
 Use um dos comandos:
-• "player" → iniciar análise individual
-• "team" → iniciar análise de time
+• Digite seu **Steam ID64** e clique em **Iniciar Análise**
 • "status" → ver progresso
 • "heatmap", "radar", "economia", "recomendações" → detalhes após finalizar
 • "como funciona" → entender o fluxo completo`;
@@ -63,15 +62,7 @@ Use um dos comandos:
 
   if (!job) {
     if (lower.includes('como funciona') || lower.includes('funciona')) {
-      return '📌 Fluxo: 1) Faça upload da demo. 2) Escolha **player** ou **team**. 3) Deixe a IA processar eventos, gerar heatmap e radar. 4) Converse comigo para virar os insights em treino.';
-    }
-
-    if (lower.includes('player') || lower.includes('jogador')) {
-      return '⚡ Bastam alguns cliques! Selecione o cartão de **Análise Individual** para processar o jogador principal.';
-    }
-
-    if (lower.includes('team') || lower.includes('time')) {
-      return '🏆 Vamos nessa! Clique em **Análise de Time** para avaliar coordenação, economia e execuções.';
+      return '📌 Fluxo: 1) Faça upload da demo. 2) Digite seu **Steam ID64** (opcional - para análise focada no seu time). 3) Clique em **Iniciar Análise**. 4) Deixe a IA processar eventos, gerar heatmap e radar. 5) Converse comigo para virar os insights em treino.';
     }
 
     if (lower.includes('heatmap') || lower.includes('radar')) {
@@ -79,7 +70,8 @@ Use um dos comandos:
     }
 
     return `🤖 RUSH aqui! Demo carregada: **${upload.originalName}** (${upload.sizeMB}MB).
-Escolha **"player"** ou **"team"** quando quiser iniciar o processamento.`;
+
+Digite seu **Steam ID64** no campo acima (opcional) e clique em **Iniciar Análise** para processar a demo.`;
   }
 
   if (job.status === 'processing') {

@@ -212,7 +212,8 @@ const CS2ProAnalyzerApp = () => {
         {
           role: 'ai',
           text: `📁 Demo **${uploaded.name}** recebida (${uploaded.sizeMB}MB).
-Digite **"player"** ou **"team"** para iniciar a análise!`,
+
+Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu time, ou deixe em branco para análise geral. Clique em **Iniciar Análise** quando estiver pronto!`,
         },
       ]);
       setJobStatus('queued');
@@ -244,13 +245,8 @@ Digite **"player"** ou **"team"** para iniciar a análise!`,
 
     const lower = message.toLowerCase();
 
-    if ((lower.includes('player') || lower.includes('jogador')) && uploadedDemo) {
-      setAnalysisType('player');
-      setCurrentPage('select-analysis');
-    }
-
-    if ((lower.includes('team') || lower.includes('time')) && uploadedDemo) {
-      setAnalysisType('team');
+    // Se usuário mencionar análise ou iniciar, redireciona para página de análise
+    if ((lower.includes('analis') || lower.includes('iniciar') || lower.includes('começar')) && uploadedDemo) {
       setCurrentPage('select-analysis');
     }
 

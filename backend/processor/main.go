@@ -13,11 +13,11 @@ import (
 
 // Versão simplificada que compila
 type SimpleAnalysis struct {
-	Metadata     MatchMetadata     `json:"metadata"`
-	Events       []SimpleEvent     `json:"events"`
-	Players      []SimplePlayer    `json:"players"`
-	Summary      SimpleSummary     `json:"summary"`
-	TargetPlayer *PlayerAnalysis   `json:"targetPlayer,omitempty"` // Análise focada no Steam ID fornecido
+	Metadata     MatchMetadata   `json:"metadata"`
+	Events       []SimpleEvent   `json:"events"`
+	Players      []SimplePlayer  `json:"players"`
+	Summary      SimpleSummary   `json:"summary"`
+	TargetPlayer *PlayerAnalysis `json:"targetPlayer,omitempty"` // Análise focada no Steam ID fornecido
 }
 
 type MatchMetadata struct {
@@ -44,19 +44,19 @@ type SimplePlayer struct {
 }
 
 type PlayerAnalysis struct {
-	SteamID        uint64   `json:"steamID"`
-	Name           string   `json:"name"`
-	Team           string   `json:"team"`
-	Kills          int      `json:"kills"`
-	Deaths         int      `json:"deaths"`
-	Assists        int      `json:"assists"`
-	HSKills        int      `json:"hsKills"`
-	Damage         int      `json:"damage"`
-	ADR            float64  `json:"adr"`
-	HSRate         float64  `json:"hsRate"`
-	KDRatio        float64  `json:"kdRatio"`
-	RoundsPlayed   int      `json:"roundsPlayed"`
-	KeyMoments     []string `json:"keyMoments"`
+	SteamID         uint64   `json:"steamID"`
+	Name            string   `json:"name"`
+	Team            string   `json:"team"`
+	Kills           int      `json:"kills"`
+	Deaths          int      `json:"deaths"`
+	Assists         int      `json:"assists"`
+	HSKills         int      `json:"hsKills"`
+	Damage          int      `json:"damage"`
+	ADR             float64  `json:"adr"`
+	HSRate          float64  `json:"hsRate"`
+	KDRatio         float64  `json:"kdRatio"`
+	RoundsPlayed    int      `json:"roundsPlayed"`
+	KeyMoments      []string `json:"keyMoments"`
 	Recommendations []string `json:"recommendations"`
 }
 
@@ -75,7 +75,7 @@ func main() {
 
 	demoPath := os.Args[1]
 	var targetSteamID uint64 = 0
-	
+
 	// Steam ID é opcional
 	if len(os.Args) >= 3 {
 		_, err := fmt.Sscanf(os.Args[2], "%d", &targetSteamID)
@@ -192,25 +192,29 @@ func main() {
 	})
 
 	p.RegisterEventHandler(func(e events.BombPlanted) {
-		event := SimpleEvent{
-			Type: "bomb_planted",
-			Time: p.CurrentTime().Seconds(),
-			Data: map[string]interface{}{
-				"player": getName(e.Player),
-			},
+		if e.Player != nil {
+			event := SimpleEvent{
+				Type: "bomb_planted",
+				Time: p.CurrentTime().Seconds(),
+				Data: map[string]interface{}{
+					"player": getName(e.Player),
+				},
+			}
+			analysis.Events = append(analysis.Events, event)
 		}
-		analysis.Events = append(analysis.Events, event)
 	})
 
 	p.RegisterEventHandler(func(e events.BombDefused) {
-		event := SimpleEvent{
-			Type: "bomb_defused",
-			Time: p.CurrentTime().Seconds(),
-			Data: map[string]interface{}{
-				"player": getName(e.Player),
-			},
+		if e.Player != nil {
+			event := SimpleEvent{
+				Type: "bomb_defused",
+				Time: p.CurrentTime().Seconds(),
+				Data: map[string]interface{}{
+					"player": getName(e.Player),
+				},
+			}
+			analysis.Events = append(analysis.Events, event)
 		}
-		analysis.Events = append(analysis.Events, event)
 	})
 
 	p.RegisterEventHandler(func(e events.BombExplode) {
@@ -237,8 +241,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Agora podemos obter o header após o parse
+	// Agora podemos obter o header após o parse - com verificações de segurança
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Erro ao acessar dados após parsing: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
+	// Tentar obter header e gameState com segurança
 	header := p.Header()
+	if header == nil {
+		fmt.Fprintf(os.Stderr, "Erro: Header não disponível após parsing\n")
+		os.Exit(1)
+	}
+
 	gs := p.GameState()
 	if gs == nil {
 		fmt.Fprintf(os.Stderr, "Erro: GameState não disponível após parsing\n")
@@ -255,12 +272,22 @@ func main() {
 		mapName = "unknown"
 	}
 
+	// Obter scores com segurança
+	scoreT := 0
+	scoreCT := 0
+	if gs.TeamTerrorists() != nil {
+		scoreT = gs.TeamTerrorists().Score()
+	}
+	if gs.TeamCounterTerrorists() != nil {
+		scoreCT = gs.TeamCounterTerrorists().Score()
+	}
+
 	analysis.Metadata = MatchMetadata{
 		Map:      mapName,
 		Duration: formatDuration(duration),
 		Rounds:   roundCount,
-		ScoreT:   gs.TeamTerrorists().Score(),
-		ScoreCT:  gs.TeamCounterTerrorists().Score(),
+		ScoreT:   scoreT,
+		ScoreCT:  scoreCT,
 	}
 
 	for _, player := range playerMap {
@@ -307,11 +334,11 @@ func main() {
 }
 
 type PlayerStats struct {
-	Kills      int
-	Deaths     int
-	Assists    int
-	HSKills    int
-	Damage     int
+	Kills        int
+	Deaths       int
+	Assists      int
+	HSKills      int
+	Damage       int
 	RoundsPlayed int
 }
 
@@ -404,26 +431,26 @@ func findPlayerAnalysis(steamID uint64, playerMap map[uint64]*SimplePlayer, play
 	}
 
 	return &PlayerAnalysis{
-		SteamID:        steamID,
-		Name:           player.Name,
-		Team:           player.Team,
-		Kills:          stats.Kills,
-		Deaths:         stats.Deaths,
-		Assists:        player.Assists,
-		HSKills:        stats.HSKills,
-		Damage:         stats.Damage,
-		ADR:            adr,
-		HSRate:         hsRate,
-		KDRatio:        kdRatio,
-		RoundsPlayed:   rounds,
-		KeyMoments:     []string{fmt.Sprintf("%d kills com %.1f%% HS rate", stats.Kills, hsRate)},
+		SteamID:         steamID,
+		Name:            player.Name,
+		Team:            player.Team,
+		Kills:           stats.Kills,
+		Deaths:          stats.Deaths,
+		Assists:         player.Assists,
+		HSKills:         stats.HSKills,
+		Damage:          stats.Damage,
+		ADR:             adr,
+		HSRate:          hsRate,
+		KDRatio:         kdRatio,
+		RoundsPlayed:    rounds,
+		KeyMoments:      []string{fmt.Sprintf("%d kills com %.1f%% HS rate", stats.Kills, hsRate)},
 		Recommendations: generateRecommendations(stats, hsRate, adr, kdRatio),
 	}
 }
 
 func generateRecommendations(stats *PlayerStats, hsRate, adr, kdRatio float64) []string {
 	recs := []string{}
-	
+
 	if hsRate < 30 {
 		recs = append(recs, "Trabalhe em mira mais precisa para aumentar taxa de headshots")
 	}
@@ -436,11 +463,11 @@ func generateRecommendations(stats *PlayerStats, hsRate, adr, kdRatio float64) [
 	if stats.Damage > 0 && stats.Kills == 0 {
 		recs = append(recs, "Converte dano em kills - finalize as trocas")
 	}
-	
+
 	if len(recs) == 0 {
 		recs = append(recs, "Mantenha o bom desempenho!")
 	}
-	
+
 	return recs
 }
 

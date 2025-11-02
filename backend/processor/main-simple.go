@@ -192,25 +192,29 @@ func main() {
 	})
 
 	p.RegisterEventHandler(func(e events.BombPlanted) {
-		event := SimpleEvent{
-			Type: "bomb_planted",
-			Time: p.CurrentTime().Seconds(),
-			Data: map[string]interface{}{
-				"player": getName(e.Player),
-			},
+		if e.Player != nil {
+			event := SimpleEvent{
+				Type: "bomb_planted",
+				Time: p.CurrentTime().Seconds(),
+				Data: map[string]interface{}{
+					"player": getName(e.Player),
+				},
+			}
+			analysis.Events = append(analysis.Events, event)
 		}
-		analysis.Events = append(analysis.Events, event)
 	})
 
 	p.RegisterEventHandler(func(e events.BombDefused) {
-		event := SimpleEvent{
-			Type: "bomb_defused",
-			Time: p.CurrentTime().Seconds(),
-			Data: map[string]interface{}{
-				"player": getName(e.Player),
-			},
+		if e.Player != nil {
+			event := SimpleEvent{
+				Type: "bomb_defused",
+				Time: p.CurrentTime().Seconds(),
+				Data: map[string]interface{}{
+					"player": getName(e.Player),
+				},
+			}
+			analysis.Events = append(analysis.Events, event)
 		}
-		analysis.Events = append(analysis.Events, event)
 	})
 
 	p.RegisterEventHandler(func(e events.BombExplode) {
@@ -237,7 +241,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Agora podemos obter o header após o parse
+	// Agora podemos obter o header após o parse - com verificações de segurança
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Erro ao acessar dados após parsing: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
+	// Tentar obter header e gameState com segurança
 	header := p.Header()
 	gs := p.GameState()
 	if gs == nil {
@@ -255,12 +267,22 @@ func main() {
 		mapName = "unknown"
 	}
 
+	// Obter scores com segurança
+	scoreT := 0
+	scoreCT := 0
+	if gs.TeamTerrorists() != nil {
+		scoreT = gs.TeamTerrorists().Score()
+	}
+	if gs.TeamCounterTerrorists() != nil {
+		scoreCT = gs.TeamCounterTerrorists().Score()
+	}
+
 	analysis.Metadata = MatchMetadata{
 		Map:      mapName,
 		Duration: formatDuration(duration),
 		Rounds:   roundCount,
-		ScoreT:   gs.TeamTerrorists().Score(),
-		ScoreCT:  gs.TeamCounterTerrorists().Score(),
+		ScoreT:   scoreT,
+		ScoreCT:  scoreCT,
 	}
 
 	for _, player := range playerMap {
