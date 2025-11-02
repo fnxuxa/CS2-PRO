@@ -44,6 +44,49 @@ export interface EconomyStats {
   swings: string[];
 }
 
+export interface PlayerStats {
+  steamID: number;
+  name: string;
+  team: 'CT' | 'T';
+  kills: number;
+  deaths: number;
+  assists: number;
+  adr?: number;
+  hsRate?: number;
+  kdRatio?: number;
+  damage?: number;
+  roundsPlayed?: number;
+}
+
+export interface TeamStats {
+  team: 'CT' | 'T';
+  score: number;
+  totalKills: number;
+  totalDeaths: number;
+  avgKDRatio: number;
+  avgADR: number;
+  bombPlants: number;
+  bombDefuses: number;
+  zonePerformance: ZonePerformance[];
+}
+
+export interface ZonePerformance {
+  zone: string;
+  kills: number;
+  deaths: number;
+  control: number; // 0-100%
+}
+
+export interface DetailedRound {
+  round: number;
+  winner: 'CT' | 'T';
+  reason: number;
+  time: number;
+  keyEvents: string[];
+  mvp?: string;
+  detail: string;
+}
+
 export interface AnalysisData {
   type: AnalysisType;
   map: string;
@@ -63,6 +106,16 @@ export interface AnalysisData {
   roundHighlights: RoundHighlight[];
   recommendations: string[];
   economy: EconomyStats;
+  // Novos campos
+  players: PlayerStats[];
+  teams: TeamStats[];
+  topPerformers: {
+    mostKills: PlayerStats;
+    mostAssists: PlayerStats;
+    mostDamage: PlayerStats;
+    bestKDRatio: PlayerStats;
+  };
+  detailedRounds: DetailedRound[];
 }
 
 export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';

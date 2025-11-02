@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair } from 'lucide-react';
+import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair, Shield, Skull, TrendingDown } from 'lucide-react';
 
 type View = 'landing' | 'upload-area' | 'select-analysis' | 'processing' | 'results';
 type Trend = 'up' | 'down' | 'neutral';
@@ -58,6 +58,47 @@ interface EconomyStats {
   swings: string[];
 }
 
+interface PlayerStats {
+  steamID: number;
+  name: string;
+  team: 'CT' | 'T';
+  kills: number;
+  deaths: number;
+  assists: number;
+  adr?: number;
+  hsRate?: number;
+  kdRatio?: number;
+  damage?: number;
+  roundsPlayed?: number;
+}
+
+interface TeamStats {
+  team: 'CT' | 'T';
+  score: number;
+  totalKills: number;
+  totalDeaths: number;
+  avgKDRatio: number;
+  avgADR: number;
+  bombPlants: number;
+  bombDefuses: number;
+  zonePerformance: Array<{
+    zone: string;
+    kills: number;
+    deaths: number;
+    control: number;
+  }>;
+}
+
+interface DetailedRound {
+  round: number;
+  winner: 'CT' | 'T';
+  reason: number;
+  time: number;
+  keyEvents: string[];
+  mvp?: string;
+  detail: string;
+}
+
 interface AnalysisData {
   type: 'player' | 'team';
   map: string;
@@ -77,6 +118,16 @@ interface AnalysisData {
   roundHighlights: RoundHighlight[];
   recommendations: string[];
   economy: EconomyStats;
+  // Novos campos
+  players?: PlayerStats[];
+  teams?: TeamStats[];
+  topPerformers?: {
+    mostKills: PlayerStats;
+    mostAssists: PlayerStats;
+    mostDamage: PlayerStats;
+    bestKDRatio: PlayerStats;
+  };
+  detailedRounds?: DetailedRound[];
 }
 
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
@@ -982,12 +1033,53 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
 
   // ==================== RESULTS PAGE ====================
   if (currentPage === 'results' && analysis) {
+    const [selectedTab, setSelectedTab] = useState<'overview' | 'players' | 'teams' | 'rounds' | 'heatmap' | 'radar' | 'chat'>('overview');
+    const [teamComparison, setTeamComparison] = useState<'both' | 'ct' | 't'>('both');
+    
+    const players = analysis.players || [];
+    const teams = analysis.teams || [];
+    const topPerformers = analysis.topPerformers;
+    const detailedRounds = analysis.detailedRounds || analysis.roundHighlights.map(r => ({
+      round: r.round,
+      winner: (r.result.includes('CT') ? 'CT' : 'T') as 'CT' | 'T',
+      reason: 0,
+      time: 0,
+      keyEvents: [],
+      detail: r.detail,
+    }));
+    
+    // Fallbacks para topPerformers
+    const getTopPerformer = (key: 'mostKills' | 'mostAssists' | 'mostDamage' | 'bestKDRatio'): PlayerStats | null => {
+      if (!topPerformers || !topPerformers[key]) {
+        if (players.length === 0) return null;
+        const p = players[0];
+        return {
+          steamID: p.steamID,
+          name: p.name,
+          team: p.team,
+          kills: p.kills,
+          deaths: p.deaths,
+          assists: p.assists,
+          adr: p.adr,
+          hsRate: p.hsRate,
+          kdRatio: p.kdRatio,
+        };
+      }
+      return topPerformers[key];
+    };
+
+    // Ordenar jogadores por diferentes métricas
+    const playersByKills = [...players].sort((a, b) => b.kills - a.kills);
+    const playersByAssists = [...players].sort((a, b) => b.assists - a.assists);
+    const playersByKDRatio = [...players].sort((a, b) => (b.kdRatio || 0) - (a.kdRatio || 0));
+    const playersByADR = [...players].filter(p => p.adr).sort((a, b) => (b.adr || 0) - (a.adr || 0));
+
     return (
       <div className="min-h-screen bg-black py-12 px-6">
         <div className="max-w-7xl mx-auto">
           
-          {/* Header */}
-          <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-8 mb-10">
+          {/* Header com Score */}
+          <div className="bg-gradient-to-r from-gray-900 via-gray-900 to-gray-900 border-2 border-gray-800 rounded-2xl p-8 mb-10">
             <button 
               onClick={() => setCurrentPage('upload-area')}
               className="text-gray-400 hover:text-white mb-6 flex items-center gap-2 transition-colors group"
@@ -995,250 +1087,672 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
               <ArrowRight className="w-5 h-5 rotate-180 group-hover:-translate-x-1 transition-transform" />
               Voltar
             </button>
-            <h2 className="text-5xl font-black text-white mb-4">
-              Relatório de <span className="text-orange-500">Análise</span>
-            </h2>
-            <p className="text-gray-400 text-xl">
-              {uploadedDemo?.name} • {analysis.map} • {analysis.duration} • {analysis.rounds} rounds
-            </p>
-          </div>
-
-          {/* Overview Cards */}
-          <div className="grid lg:grid-cols-2 gap-8 mb-10">
-            <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-10 shadow-2xl shadow-orange-500/30 glow-orange">
-              <div className="flex items-center gap-4 mb-6">
-                <Award className="w-16 h-16 text-orange-500" />
-                <div>
-                  <h3 className="text-3xl font-bold text-white">
-                    {analysis.type === 'player' ? 'MVP da Partida' : 'Equipe em Destaque'}
-                  </h3>
-                  <p className="text-xs uppercase tracking-[0.35em] text-orange-200 mt-1">
-                    {analysis.map.toUpperCase()} • {analysis.duration}
-                  </p>
-                </div>
+            
+            <div className="grid md:grid-cols-3 gap-6 mb-6">
+              <div className="md:col-span-1">
+                <h2 className="text-4xl font-black text-white mb-2">
+                  Relatório de <span className="text-orange-500">Análise</span>
+                </h2>
+                <p className="text-gray-400 text-sm">
+                  {uploadedDemo?.name} • {analysis.map}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">
+                  {analysis.duration} • {analysis.rounds} rounds
+                </p>
               </div>
-              <p className="text-5xl font-black text-white mb-4">{analysis.mvp}</p>
-              <p className="text-gray-100 leading-relaxed mb-6">{analysis.summary}</p>
-              <div className="grid grid-cols-2 gap-4 text-gray-200">
-                <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3">
-                  <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Rounds</p>
-                  <p className="text-xl font-bold text-white">{analysis.rounds}</p>
-                </div>
-                {analysis.score && (
-                  <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3">
-                    <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Placar Final</p>
-                    <p className="text-xl font-bold text-green-400">{analysis.score}</p>
-                  </div>
-                )}
-                {analysis.rating && (
-                  <div className="bg-black/40 border border-orange-500/30 rounded-2xl px-4 py-3 col-span-2">
-                    <p className="text-xs uppercase text-gray-400 tracking-[0.3em] mb-1">Rating 2.0</p>
-                    <p className="text-3xl font-black text-green-400">{analysis.rating}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <TrendingUp className="w-10 h-10 text-blue-400" />
-                <div>
-                  <h3 className="text-2xl font-bold text-white">Principais Achados</h3>
-                  <p className="text-sm text-gray-400">Insights priorizados pela IA</p>
-                </div>
-              </div>
-              <ul className="space-y-4">
-                {analysis.keyFindings.map((finding, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <span className="text-orange-500 text-2xl leading-none">•</span>
-                    <p className="text-gray-200 leading-relaxed">{finding}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          {metrics.length > 0 && (
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-10 mb-10">
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h3 className="text-3xl font-bold text-white">Métricas-Chave</h3>
-                  <p className="text-sm text-gray-400">
-                    {analysis.type === 'player' ? 'Performance individual' : 'Sinergia de equipe'}
-                  </p>
-                </div>
-                <div className="w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/30">
-                  <BarChart3 className="w-7 h-7 text-black" />
-                </div>
-              </div>
-              <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
-                {metrics.map((metric, index) => {
-                  const trend = trendCopy[metric.trend];
-                  return (
-                    <div
-                      key={index}
-                      className="bg-black/60 border border-gray-800 hover:border-orange-500/40 rounded-2xl p-6 transition-all duration-300"
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="text-lg font-bold text-white">{metric.label}</h4>
-                        <span
-                          className={`inline-flex items-center gap-1 text-xs font-semibold px-3 py-1 rounded-full border ${trendBadgeClasses[metric.trend]}`}
-                        >
-                          {trend.icon} {trend.label}
-                        </span>
+              
+              {/* Score Card */}
+              <div className="md:col-span-2">
+                <div className="bg-black/60 border-2 border-gray-800 rounded-2xl p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="text-center flex-1">
+                      <div className="flex items-center justify-center gap-2 mb-2">
+                        <Shield className="w-6 h-6 text-blue-400" />
+                        <span className="text-gray-400 text-sm uppercase tracking-wider">Counter-Terrorists</span>
                       </div>
-                      <p className="text-4xl font-black text-orange-500 mb-2">{metric.value}</p>
-                      <p className="text-sm text-gray-400 leading-relaxed">{metric.description}</p>
+                      <div className="text-5xl font-black text-blue-400">{teams.find(t => t.team === 'CT')?.score || '0'}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {teams.find(t => t.team === 'CT')?.totalKills || 0} kills • K/D: {teams.find(t => t.team === 'CT')?.avgKDRatio.toFixed(2) || '0.00'}
+                      </div>
                     </div>
-                  );
-                })}
+                    
+                    <div className="text-3xl font-black text-gray-600 mx-4">VS</div>
+                    
+                    <div className="text-center flex-1">
+                      <div className="flex items-center justify-center gap-2 mb-2">
+                        <Skull className="w-6 h-6 text-orange-400" />
+                        <span className="text-gray-400 text-sm uppercase tracking-wider">Terrorists</span>
+                      </div>
+                      <div className="text-5xl font-black text-orange-400">{teams.find(t => t.team === 'T')?.score || '0'}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {teams.find(t => t.team === 'T')?.totalKills || 0} kills • K/D: {teams.find(t => t.team === 'T')?.avgKDRatio.toFixed(2) || '0.00'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Tabs de Navegação */}
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {[
+                { id: 'overview', label: 'Visão Geral', icon: BarChart3 },
+                { id: 'players', label: 'Jogadores', icon: Users },
+                { id: 'teams', label: 'Times', icon: Shield },
+                { id: 'rounds', label: 'Rounds', icon: Target },
+                { id: 'heatmap', label: 'Heatmap', icon: Flame },
+                { id: 'radar', label: 'Radar', icon: Compass },
+                { id: 'chat', label: 'RUSH Chat', icon: MessageSquare },
+              ].map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setSelectedTab(id as any)}
+                  className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap ${
+                    selectedTab === id
+                      ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-black shadow-lg shadow-orange-500/50'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Conteúdo das Tabs */}
+          {selectedTab === 'overview' && (
+            <div className="space-y-8">
+              {/* MVP e Top Performers */}
+              <div className="grid lg:grid-cols-3 gap-6">
+                <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-8 shadow-2xl shadow-orange-500/30">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Crown className="w-8 h-8 text-orange-500" />
+                    <h3 className="text-2xl font-bold text-white">MVP</h3>
+                  </div>
+                  <p className="text-4xl font-black text-white mb-2">{analysis.mvp}</p>
+                  {analysis.rating && (
+                    <p className="text-lg text-orange-200">Rating: {analysis.rating.toFixed(2)}</p>
+                  )}
+                </div>
+                
+                {(topPerformers || players.length > 0) && (
+                  <>
+                    <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Skull className="w-5 h-5 text-red-400" />
+                        <h4 className="text-lg font-bold text-white">Mais Kills</h4>
+                      </div>
+                      <p className="text-2xl font-black text-red-400">{getTopPerformer('mostKills')?.name || playersByKills[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400 mt-1">{getTopPerformer('mostKills')?.kills || playersByKills[0]?.kills || 0} eliminações</p>
+                    </div>
+                    
+                    <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Target className="w-5 h-5 text-blue-400" />
+                        <h4 className="text-lg font-bold text-white">Mais Assists</h4>
+                      </div>
+                      <p className="text-2xl font-black text-blue-400">{getTopPerformer('mostAssists')?.name || playersByAssists[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400 mt-1">{getTopPerformer('mostAssists')?.assists || playersByAssists[0]?.assists || 0} assistências</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Métricas Principais */}
+              {metrics.length > 0 && (
+                <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                  <h3 className="text-2xl font-bold text-white mb-6">Métricas-Chave</h3>
+                  <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    {metrics.map((metric, index) => {
+                      const trend = trendCopy[metric.trend];
+                      return (
+                        <div
+                          key={index}
+                          className="bg-black/60 border border-gray-800 rounded-2xl p-6"
+                        >
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-lg font-bold text-white">{metric.label}</h4>
+                            <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${trendBadgeClasses[metric.trend]}`}>
+                              {trend.icon} {trend.label}
+                            </span>
+                          </div>
+                          <p className="text-3xl font-black text-orange-500 mb-2">{metric.value}</p>
+                          <p className="text-sm text-gray-400">{metric.description}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Principais Achados */}
+              <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <TrendingUp className="w-8 h-8 text-blue-400" />
+                  <h3 className="text-2xl font-bold text-white">Principais Achados</h3>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  {analysis.keyFindings.map((finding, index) => (
+                    <div key={index} className="flex items-start gap-3 bg-black/40 rounded-xl p-4">
+                      <span className="text-orange-500 text-xl leading-none mt-1">•</span>
+                      <p className="text-gray-200 leading-relaxed">{finding}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recomendações */}
+              <div className="bg-gradient-to-br from-orange-500/15 to-orange-600/10 border-2 border-orange-500/40 rounded-3xl p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <Sparkles className="w-8 h-8 text-orange-200" />
+                  <h3 className="text-2xl font-bold text-white">Plano de Ação RUSH</h3>
+                </div>
+                <ul className="space-y-3 text-gray-100">
+                  {analysis.recommendations.map((rec, index) => (
+                    <li key={index} className="flex items-start gap-3">
+                      <span className="text-orange-300 font-black">{index + 1}.</span>
+                      <p className="leading-relaxed">{rec}</p>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           )}
 
-          <div className="grid lg:grid-cols-[2fr,1fr] gap-8 mb-10">
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-2xl font-bold text-white">Heatmap &amp; Posicionamento</h3>
-                  <p className="text-sm text-gray-400">Mapa {analysis.map}</p>
-                </div>
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
-                  <Flame className="w-6 h-6 text-black" />
-                </div>
-              </div>
-              <div className="relative rounded-2xl overflow-hidden h-72 mb-6">
-                <img
-                  src={analysis.heatmapUrl}
-                  alt={`Heatmap ${analysis.map}`}
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute top-4 left-4 bg-black/60 text-orange-300 px-3 py-1 rounded-full text-xs uppercase tracking-[0.35em]">
-                  Heatmap
-                </div>
-              </div>
-              <p className="text-gray-300 leading-relaxed">{analysis.heatmapSummary}</p>
-            </div>
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <Crosshair className="w-7 h-7 text-orange-400" />
-                <div>
-                  <h3 className="text-xl font-bold text-white">Hotspots Prioritários</h3>
-                  <p className="text-sm text-gray-400">Zonas que pedem revisão</p>
-                </div>
-              </div>
-              <ul className="space-y-4">
-                {analysis.heatmapHotspots.map((hotspot, index) => (
-                  <li key={index} className="bg-black/40 border border-gray-800 rounded-2xl px-4 py-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-white font-bold">{hotspot.zone}</span>
-                      <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${pressureBadgeClasses[hotspot.pressure]}`}>
-                        {hotspot.pressure}
-                      </span>
+          {/* Tab: Players */}
+          {selectedTab === 'players' && (
+            <div className="space-y-8">
+              {/* Top Performers Cards */}
+              <div className="grid md:grid-cols-4 gap-4">
+                {(topPerformers || players.length > 0) && (
+                  <>
+                    <div className="bg-gradient-to-br from-red-500/20 to-red-600/20 border-2 border-red-500 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Skull className="w-5 h-5 text-red-400" />
+                        <h4 className="font-bold text-white">Mais Kills</h4>
+                      </div>
+                      <p className="text-2xl font-black text-red-400">{getTopPerformer('mostKills')?.name || playersByKills[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400">{getTopPerformer('mostKills')?.kills || playersByKills[0]?.kills || 0} eliminações</p>
                     </div>
-                    <p className="text-sm text-gray-300 mt-2 leading-relaxed">{hotspot.note}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+                    
+                    <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/20 border-2 border-blue-500 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Target className="w-5 h-5 text-blue-400" />
+                        <h4 className="font-bold text-white">Mais Assists</h4>
+                      </div>
+                      <p className="text-2xl font-black text-blue-400">{getTopPerformer('mostAssists')?.name || playersByAssists[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400">{getTopPerformer('mostAssists')?.assists || playersByAssists[0]?.assists || 0} assistências</p>
+                    </div>
+                    
+                    <div className="bg-gradient-to-br from-green-500/20 to-green-600/20 border-2 border-green-500 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Zap className="w-5 h-5 text-green-400" />
+                        <h4 className="font-bold text-white">Mais Dano</h4>
+                      </div>
+                      <p className="text-2xl font-black text-green-400">{getTopPerformer('mostDamage')?.name || playersByADR[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400">ADR: {getTopPerformer('mostDamage')?.adr?.toFixed(1) || playersByADR[0]?.adr?.toFixed(1) || 'N/A'}</p>
+                    </div>
+                    
+                    <div className="bg-gradient-to-br from-yellow-500/20 to-yellow-600/20 border-2 border-yellow-500 rounded-2xl p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Star className="w-5 h-5 text-yellow-400" />
+                        <h4 className="font-bold text-white">Melhor K/D</h4>
+                      </div>
+                      <p className="text-2xl font-black text-yellow-400">{getTopPerformer('bestKDRatio')?.name || playersByKDRatio[0]?.name || 'N/A'}</p>
+                      <p className="text-sm text-gray-400">K/D: {getTopPerformer('bestKDRatio')?.kdRatio?.toFixed(2) || playersByKDRatio[0]?.kdRatio?.toFixed(2) || 'N/A'}</p>
+                    </div>
+                  </>
+                )}
+              </div>
 
-          <div className="grid lg:grid-cols-2 gap-8 mb-10">
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <Compass className="w-7 h-7 text-cyan-400" />
-                <div>
-                  <h3 className="text-xl font-bold text-white">Radar &amp; Rotação</h3>
-                  <p className="text-sm text-gray-400">Momentos chave do mapa</p>
+              {/* Tabela de Jogadores */}
+              <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                <h3 className="text-2xl font-bold text-white mb-6">Estatísticas dos Jogadores</h3>
+                
+                {/* Filtros de ordenação */}
+                <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+                  {[
+                    { label: 'Kills', data: playersByKills },
+                    { label: 'Assists', data: playersByAssists },
+                    { label: 'K/D Ratio', data: playersByKDRatio },
+                    { label: 'ADR', data: playersByADR },
+                  ].map((filter, idx) => (
+                    <button
+                      key={idx}
+                      className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-semibold whitespace-nowrap"
+                    >
+                      Top {filter.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-800">
+                        <th className="text-left py-3 px-4 text-gray-400 font-semibold text-sm">Jogador</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">Time</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">K</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">D</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">A</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">K/D</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">ADR</th>
+                        <th className="text-center py-3 px-4 text-gray-400 font-semibold text-sm">HS%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {playersByKills.map((player, idx) => (
+                        <tr key={player.steamID} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-3">
+                              <span className="text-gray-500 font-bold">#{idx + 1}</span>
+                              <span className="text-white font-semibold">{player.name}</span>
+                            </div>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                              player.team === 'CT' 
+                                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+                                : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                            }`}>
+                              {player.team}
+                            </span>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className="text-white font-bold">{player.kills}</span>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className="text-red-400 font-bold">{player.deaths}</span>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className="text-blue-400 font-bold">{player.assists}</span>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className={`font-bold ${(player.kdRatio || 0) > 1 ? 'text-green-400' : 'text-red-400'}`}>
+                              {(player.kdRatio || (player.deaths > 0 ? player.kills / player.deaths : player.kills)).toFixed(2)}
+                            </span>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className="text-gray-300">{player.adr ? player.adr.toFixed(1) : 'N/A'}</span>
+                          </td>
+                          <td className="text-center py-4 px-4">
+                            <span className="text-gray-300">{player.hsRate ? `${player.hsRate.toFixed(1)}%` : 'N/A'}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-              <div className="space-y-5">
-                {analysis.radarMoments.map(moment => (
-                  <div key={moment.tick} className="bg-black/40 border border-gray-800 rounded-2xl p-5">
-                    <div className="flex items-center justify-between text-xs text-gray-400 uppercase tracking-[0.3em] mb-3">
-                      <span>{moment.clock}</span>
-                      <span>{moment.callout}</span>
-                    </div>
-                    <p className="text-white font-semibold mb-4">{moment.highlight}</p>
-                    <div className="grid sm:grid-cols-2 gap-3 text-sm text-gray-300">
-                      {moment.players.map(player => (
-                        <div key={`${moment.tick}-${player.name}`} className="flex items-center gap-2">
-                          <span className={`w-2.5 h-2.5 rounded-full ${player.role === 'ct' ? 'bg-blue-400' : 'bg-orange-400'}`}></span>
-                          <span className="font-semibold text-white">{player.name}</span>
-                          <span className="text-gray-500">•</span>
-                          <span className="text-gray-400">{player.action}</span>
+
+              {/* Gráfico de K/D por Jogador */}
+              <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                <h3 className="text-2xl font-bold text-white mb-6">Distribuição de K/D</h3>
+                <div className="space-y-4">
+                  {playersByKDRatio.slice(0, 5).map((player) => {
+                    const kd = player.kdRatio || (player.deaths > 0 ? player.kills / player.deaths : player.kills);
+                    const maxKD = Math.max(...playersByKDRatio.map(p => p.kdRatio || (p.deaths > 0 ? p.kills / p.deaths : p.kills)));
+                    const width = (kd / maxKD) * 100;
+                    
+                    return (
+                      <div key={player.steamID}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-white font-semibold text-sm">{player.name}</span>
+                          <span className={`text-sm font-bold ${kd > 1 ? 'text-green-400' : 'text-red-400'}`}>
+                            {kd.toFixed(2)}
+                          </span>
                         </div>
+                        <div className="h-3 bg-gray-800 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all ${kd > 1 ? 'bg-gradient-to-r from-green-500 to-green-600' : 'bg-gradient-to-r from-red-500 to-red-600'}`}
+                            style={{ width: `${width}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Teams */}
+          {selectedTab === 'teams' && (
+            <div className="space-y-8">
+              {/* Comparação de Times */}
+              <div className="grid lg:grid-cols-2 gap-6">
+                {teams.map((team) => (
+                  <div 
+                    key={team.team}
+                    className={`bg-gray-900 border-2 rounded-3xl p-8 ${
+                      team.team === 'CT' ? 'border-blue-500/50' : 'border-orange-500/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 mb-6">
+                      {team.team === 'CT' ? (
+                        <Shield className="w-8 h-8 text-blue-400" />
+                      ) : (
+                        <Skull className="w-8 h-8 text-orange-400" />
+                      )}
+                      <div>
+                        <h3 className="text-2xl font-bold text-white">
+                          {team.team === 'CT' ? 'Counter-Terrorists' : 'Terrorists'}
+                        </h3>
+                        <p className="text-sm text-gray-400">Score: {team.score}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">Total Kills</p>
+                        <p className="text-2xl font-black text-white">{team.totalKills}</p>
+                      </div>
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">K/D Médio</p>
+                        <p className="text-2xl font-black text-green-400">{team.avgKDRatio.toFixed(2)}</p>
+                      </div>
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">Bombas Plantadas</p>
+                        <p className="text-2xl font-black text-orange-400">{team.bombPlants}</p>
+                      </div>
+                      <div className="bg-black/40 rounded-xl p-4">
+                        <p className="text-xs text-gray-400 uppercase mb-1">Bombas Desarmadas</p>
+                        <p className="text-2xl font-black text-blue-400">{team.bombDefuses}</p>
+                      </div>
+                    </div>
+
+                    {/* Desempenho por Zona */}
+                    {team.zonePerformance && team.zonePerformance.length > 0 && (
+                      <div>
+                        <h4 className="text-lg font-bold text-white mb-4">Desempenho por Zona</h4>
+                        <div className="space-y-3">
+                          {team.zonePerformance.slice(0, 5).map((zone, idx) => (
+                            <div key={idx} className="bg-black/40 rounded-xl p-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-white font-semibold">{zone.zone}</span>
+                                <span className="text-sm text-gray-400">{zone.control}% controle</span>
+                              </div>
+                              <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full ${team.team === 'CT' ? 'bg-blue-500' : 'bg-orange-500'}`}
+                                  style={{ width: `${zone.control}%` }}
+                                ></div>
+                              </div>
+                              <p className="text-xs text-gray-400 mt-2">
+                                {zone.kills} kills, {zone.deaths} deaths
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Rounds */}
+          {selectedTab === 'rounds' && (
+            <div className="space-y-8">
+              <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                <h3 className="text-2xl font-bold text-white mb-6">Rounds Detalhados</h3>
+                <div className="space-y-4">
+                  {detailedRounds.map((round) => (
+                    <div 
+                      key={round.round}
+                      className={`bg-black/40 border-2 rounded-2xl p-6 ${
+                        round.winner === 'CT' ? 'border-blue-500/30' : 'border-orange-500/30'
+                      }`}
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-lg shadow-lg ${
+                          round.winner === 'CT' 
+                            ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white' 
+                            : 'bg-gradient-to-br from-orange-500 to-orange-600 text-white'
+                        }`}>
+                          R{round.round}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <span className={`px-3 py-1 rounded-full text-xs font-bold mr-2 ${
+                                round.winner === 'CT' 
+                                  ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+                                  : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                              }`}>
+                                {round.winner} venceu
+                              </span>
+                              {round.mvp && (
+                                <span className="text-xs text-gray-400">MVP: {round.mvp}</span>
+                              )}
+                            </div>
+                            {round.time > 0 && (
+                              <span className="text-xs text-gray-500">
+                                {Math.floor(round.time / 60)}:{(round.time % 60).toFixed(0).padStart(2, '0')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-gray-200 mb-3">{round.detail}</p>
+                          {round.keyEvents && round.keyEvents.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {round.keyEvents.map((event, idx) => (
+                                <span 
+                                  key={idx}
+                                  className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded"
+                                >
+                                  {event}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Heatmap */}
+          {selectedTab === 'heatmap' && (
+            <div className="space-y-8">
+              <div className="grid lg:grid-cols-[2fr,1fr] gap-8">
+                <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-2xl font-bold text-white">Heatmap &amp; Posicionamento</h3>
+                      <p className="text-sm text-gray-400">Mapa {analysis.map}</p>
+                    </div>
+                    <Flame className="w-8 h-8 text-orange-400" />
+                  </div>
+                  <div className="relative rounded-2xl overflow-hidden h-96 mb-6 bg-gray-800 flex items-center justify-center">
+                    {analysis.heatmapUrl ? (
+                      <img
+                        src={analysis.heatmapUrl}
+                        alt={`Heatmap ${analysis.map}`}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-center text-gray-400">
+                        <Flame className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                        <p>Heatmap visual será gerado em breve</p>
+                        <p className="text-sm mt-2">{analysis.heatmapSummary}</p>
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-gray-300 leading-relaxed">{analysis.heatmapSummary}</p>
+                </div>
+                
+                <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                  <div className="flex items-center gap-3 mb-6">
+                    <Crosshair className="w-7 h-7 text-orange-400" />
+                    <div>
+                      <h3 className="text-xl font-bold text-white">Hotspots Prioritários</h3>
+                      <p className="text-sm text-gray-400">Zonas de maior atividade</p>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    {analysis.heatmapHotspots.map((hotspot, index) => (
+                      <div key={index} className="bg-black/40 border border-gray-800 rounded-2xl px-4 py-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-white font-bold">{hotspot.zone}</span>
+                          <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+                            hotspot.pressure === 'Alta' 
+                              ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                              : hotspot.pressure === 'Média'
+                              ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                              : 'bg-green-500/20 text-green-400 border-green-500/30'
+                          }`}>
+                            {hotspot.pressure}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-300 mt-2 leading-relaxed">{hotspot.note}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Radar */}
+          {selectedTab === 'radar' && (
+            <div className="space-y-8">
+              <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <Compass className="w-8 h-8 text-cyan-400" />
+                  <div>
+                    <h3 className="text-2xl font-bold text-white">Radar &amp; Rotação</h3>
+                    <p className="text-sm text-gray-400">Momentos chave e movimentação no mapa</p>
+                  </div>
+                </div>
+                
+                {analysis.radarMoments && analysis.radarMoments.length > 0 ? (
+                  <div className="space-y-6">
+                    {analysis.radarMoments.map((moment, idx) => (
+                      <div key={moment.tick || idx} className="bg-black/40 border border-gray-800 rounded-2xl p-6">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <span className="text-xs text-gray-400 uppercase tracking-wider mr-3">Round {moment.callout?.replace('Round ', '') || 'N/A'}</span>
+                            <span className="text-xs text-gray-500">{moment.clock}</span>
+                          </div>
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                            moment.phase === 'início' 
+                              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                              : moment.phase === 'meio'
+                              ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                              : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                          }`}>
+                            {moment.phase}
+                          </span>
+                        </div>
+                        
+                        <p className="text-white font-bold text-lg mb-4">{moment.highlight}</p>
+                        
+                        {moment.players && moment.players.length > 0 && (
+                          <div>
+                            <p className="text-sm text-gray-400 mb-3">Jogadores presentes:</p>
+                            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {moment.players.map((player, pIdx) => (
+                                <div 
+                                  key={`${moment.tick}-${player.name}-${pIdx}`} 
+                                  className="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2"
+                                >
+                                  <span className={`w-3 h-3 rounded-full ${player.role === 'ct' ? 'bg-blue-400' : 'bg-orange-400'}`}></span>
+                                  <span className="text-white font-semibold text-sm">{player.name}</span>
+                                  <span className="text-gray-500 text-xs ml-auto">{player.action}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-gray-400">
+                    <Compass className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <p>Nenhum momento de radar disponível</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Chat RUSH */}
+          {selectedTab === 'chat' && (
+            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <Sparkles className="w-8 h-8 text-orange-400" />
+                <div>
+                  <h3 className="text-2xl font-bold text-white">RUSH Coach</h3>
+                  <p className="text-sm text-gray-400">Converse com a IA sobre a análise</p>
+                </div>
+              </div>
+
+              {/* Chat Messages */}
+              <div className="h-96 overflow-y-auto p-4 bg-black/50 rounded-2xl mb-4">
+                {chatMessages.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Sparkles className="w-12 h-12 text-orange-500/50 mx-auto mb-4 animate-pulse" />
+                    <p className="text-gray-400 mb-4">👋 Olá! Sou o <span className="text-orange-500 font-bold">RUSH</span>, seu assistente de análise.</p>
+                    <p className="text-gray-500 text-sm mb-4">Pergunte sobre performance, estratégias, ou qualquer aspecto da partida!</p>
+                    <div className="flex flex-wrap justify-center gap-2 mt-4">
+                      {['Como foi minha performance?', 'Quais foram os momentos decisivos?', 'Como melhorar?', 'Análise dos times'].map((q, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setChatInput(q)}
+                          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-orange-500 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm transition-all"
+                        >
+                          {q}
+                        </button>
                       ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <Zap className="w-7 h-7 text-yellow-300" />
-                <div>
-                  <h3 className="text-xl font-bold text-white">Rounds Decisivos</h3>
-                  <p className="text-sm text-gray-400">Lances que mudaram o jogo</p>
-                </div>
-              </div>
-              <div className="space-y-5">
-                {analysis.roundHighlights.map(highlight => (
-                  <div key={highlight.round} className="flex items-start gap-4 bg-black/40 border border-gray-800 rounded-2xl p-4">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center text-black font-black text-lg shadow-lg shadow-orange-500/30">
-                      R{highlight.round}
+                ) : (
+                  chatMessages.map((msg, i) => (
+                    <div key={i} className={`flex mb-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                        msg.role === 'user' 
+                          ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-black shadow-lg shadow-orange-500/30' 
+                          : 'bg-gray-800 border border-gray-700 text-gray-100'
+                      }`}>
+                        <p className="text-sm leading-relaxed whitespace-pre-line">{msg.text}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-white font-bold text-lg mb-1">{highlight.result}</p>
-                      <p className="text-sm text-gray-300 leading-relaxed">{highlight.detail}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
-            </div>
-          </div>
 
-          <div className="grid lg:grid-cols-2 gap-8 mb-12">
-            <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <BarChart3 className="w-7 h-7 text-green-300" />
-                <div>
-                  <h3 className="text-xl font-bold text-white">Economia</h3>
-                  <p className="text-sm text-gray-400">Fluxo financeiro ao longo do mapa</p>
-                </div>
-              </div>
-              <p className="text-xs uppercase tracking-[0.35em] text-gray-500 mb-2">Gasto médio</p>
-              <p className="text-4xl font-black text-white mb-4">${analysis.economy.averageSpend.toLocaleString('pt-BR')}</p>
-              <p className="text-gray-300 leading-relaxed">{analysis.economy.economyStrength}</p>
-              <div className="mt-6 space-y-3">
-                {analysis.economy.swings.map((swing, index) => (
-                  <div key={index} className="flex items-start gap-3 text-gray-300">
-                    <span className="text-orange-400 font-bold mt-1">•</span>
-                    <p className="leading-relaxed">{swing}</p>
-                  </div>
-                ))}
+              {/* Chat Input */}
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      handleChatSubmit(e);
+                    }
+                  }}
+                  placeholder="Pergunte ao RUSH sobre a análise..."
+                  className="flex-1 bg-black text-white border border-gray-700 focus:border-orange-500 rounded-xl px-5 py-3 focus:outline-none transition-all placeholder-gray-500"
+                />
+                <button 
+                  onClick={handleChatSubmit}
+                  className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-black px-6 py-3 rounded-xl font-black shadow-lg shadow-orange-500/50 hover:shadow-orange-500/70 transition-all hover:scale-105 glow-orange"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
               </div>
             </div>
-            <div className="bg-gradient-to-br from-orange-500/15 via-orange-600/10 to-orange-500/15 border-2 border-orange-500/40 rounded-3xl p-8 shadow-2xl shadow-orange-500/20">
-              <div className="flex items-center gap-3 mb-6">
-                <Sparkles className="w-7 h-7 text-orange-200" />
-                <div>
-                  <h3 className="text-2xl font-bold text-white">Plano de Ação RUSH</h3>
-                  <p className="text-sm text-orange-100">Foque nessas melhorias primeiro</p>
-                </div>
-              </div>
-              <ul className="space-y-4 text-gray-100">
-                {analysis.recommendations.map((rec, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <span className="text-orange-300 font-black">{index + 1}.</span>
-                    <p className="leading-relaxed">{rec}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+          )}
 
           {/* Action Buttons */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="mt-12 grid grid-cols-2 gap-6">
             <button 
               onClick={() => setCurrentPage('upload-area')}
               className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-black py-6 rounded-2xl text-xl font-black shadow-lg shadow-orange-500/50 hover:shadow-orange-500/70 transition-all hover:scale-105 glow-orange flex items-center justify-center gap-3"
@@ -1263,4 +1777,5 @@ Digite seu **Steam ID64** no campo acima (opcional) para análise focada no seu 
   );
 };
 
+export default CS2ProAnalyzerApp;
 export default CS2ProAnalyzerApp;
