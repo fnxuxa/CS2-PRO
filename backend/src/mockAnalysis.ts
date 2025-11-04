@@ -30,34 +30,6 @@ export const buildMockAnalysis = (type: AnalysisType): AnalysisData => {
         { label: 'Clutch', value: '80%', description: '4 clutches convertidos', trend: 'up' },
         { label: 'Utility', value: '17.8s', description: 'Tempo médio de cegueira gerada', trend: 'up' },
       ],
-      radarMoments: [
-        {
-          tick: 12450,
-          clock: '1:17',
-          phase: 'meio',
-          callout: 'A Main',
-          highlight: 'Avanço sincronizado gera double kill abrindo espaço para retake.',
-          players: [
-            { name: 'dev1ce', role: 'ct', x: 0.63, y: 0.41, action: 'peek dry' },
-            { name: 'blameF', role: 'ct', x: 0.58, y: 0.39, action: 'trade instantâneo' },
-            { name: 'cadiaN', role: 't', x: 0.66, y: 0.45, action: 'entry frag' },
-            { name: 'jabbi', role: 't', x: 0.69, y: 0.46, action: 'flash suporte' },
-          ],
-        },
-        {
-          tick: 18740,
-          clock: '0:28',
-          phase: 'final',
-          callout: 'Bomb A',
-          highlight: 'Post-plant em triângulo impede defuse: crossfire perfeito com AWPer.',
-          players: [
-            { name: 'dev1ce', role: 't', x: 0.52, y: 0.33, action: 'cover default' },
-            { name: 'device', role: 't', x: 0.49, y: 0.36, action: 'smoke line-up' },
-            { name: 'k0nfig', role: 'ct', x: 0.54, y: 0.28, action: 'mola para defuse' },
-            { name: 'stavn', role: 'ct', x: 0.57, y: 0.32, action: 'swing late' },
-          ],
-        },
-      ],
       roundHighlights: [
         { round: 8, result: 'Clutch 1v3', detail: 'Spray transfer em Stairs seguido de defuse com 1.4s restantes.' },
         { round: 14, result: 'Triple kill de MP9', detail: 'Domínio A Main eco forçado garante reset econômico.' },
@@ -106,34 +78,6 @@ export const buildMockAnalysis = (type: AnalysisType): AnalysisData => {
       { label: 'Execuções', value: '78%', description: 'Sucesso em executes preparados', trend: 'up' },
       { label: 'Retakes', value: '60%', description: 'Vitórias em situações desfavoráveis', trend: 'up' },
       { label: 'First Kill', value: '+6', description: 'Saldo de entry frags no mapa', trend: 'up' },
-    ],
-    radarMoments: [
-      {
-        tick: 11320,
-        clock: '1:24',
-        phase: 'início',
-        callout: 'Meio',
-        highlight: 'Execução smoke wall abre caminho para controle de Conector em 7 segundos.',
-        players: [
-          { name: 'YEKINDAR', role: 't', x: 0.61, y: 0.46, action: 'entry dry' },
-          { name: 'NAF', role: 't', x: 0.58, y: 0.49, action: 'mola deep' },
-          { name: 'Rain', role: 'ct', x: 0.64, y: 0.38, action: 'fogo recuo' },
-          { name: 'Broky', role: 'ct', x: 0.67, y: 0.35, action: 'AWP hold' },
-        ],
-      },
-      {
-        tick: 19840,
-        clock: '0:21',
-        phase: 'final',
-        callout: 'Bomb B',
-        highlight: 'Retake CT com dupla flash e molotov forcejando os T para o aberto.',
-        players: [
-          { name: 'oSee', role: 'ct', x: 0.47, y: 0.27, action: 'flash retake' },
-          { name: 'EliGE', role: 'ct', x: 0.51, y: 0.29, action: 'spray control' },
-          { name: 'Twistzz', role: 't', x: 0.45, y: 0.32, action: 'cover default' },
-          { name: 'Ropz', role: 't', x: 0.42, y: 0.34, action: 'lurk stairs' },
-        ],
-      },
     ],
     roundHighlights: [
       { round: 5, result: 'Força CT vence', detail: 'Stack em B com crossfire perfeito neutraliza execução rápida.' },

@@ -1,11 +1,9 @@
 import { v4 as uuid } from 'uuid';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs';
 import { AnalysisJob, AnalysisType, JobStatusResponse, UploadInfo, AnalysisData } from './types';
 import { convertGoDataToAnalysisData } from './goDataConverter';
-
-const execFileAsync = promisify(execFile);
 
 const jobs = new Map<string, AnalysisJob>();
 
@@ -127,7 +125,6 @@ const finalizeJob = async (jobId: string) => {
     const processorPath = path.resolve(__dirname, '..', 'processor', processorName);
     
     // Verificar se o arquivo existe antes de executar
-    const fs = await import('fs');
     if (!fs.existsSync(processorPath)) {
       throw new Error(`Processador Go não encontrado em: ${processorPath}. Certifique-se de que o arquivo ${processorName} existe.`);
     }
@@ -141,32 +138,160 @@ const finalizeJob = async (jobId: string) => {
     }
 
     try {
-      const { stdout } = await execFileAsync(processorPath, args, {
-        timeout: 300000, // 5 minutos timeout
-        maxBuffer: 50 * 1024 * 1024, // 50MB buffer (aumentado para JSON grande)
+      // Usar spawn com streams para lidar com output muito grande (snapshots a cada tick)
+      // Criar arquivo temporário para output do Go (para não exceder buffer)
+      const tempOutputPath = path.join(__dirname, '..', 'storage', 'temp', `output-${jobId}.json`);
+      const tempDir = path.dirname(tempOutputPath);
+      
+      // Garantir que o diretório existe
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      
+      // Executar processador Go e redirecionar stdout para arquivo
+      await new Promise<void>((resolve, reject) => {
+        const childProcess = spawn(processorPath, args, {
+          stdio: ['ignore', 'pipe', 'pipe'], // stdin: ignore, stdout: pipe, stderr: pipe
+        });
+        
+        let stderrData = '';
+        const writeStream = fs.createWriteStream(tempOutputPath);
+        
+        // Escrever stdout diretamente no arquivo (sem limite de buffer)
+        childProcess.stdout.on('data', (data: Buffer) => {
+          writeStream.write(data);
+        });
+        
+        childProcess.stdout.on('end', () => {
+          writeStream.end();
+        });
+        
+        // Coletar stderr para logs
+        childProcess.stderr.on('data', (data: Buffer) => {
+          stderrData += data.toString();
+          // Log de stderr para debug
+          const stderrStr = data.toString();
+          if (stderrStr.includes('[DEBUG]') || stderrStr.includes('[WARN]')) {
+            console.log('[Go Processor]', stderrStr.trim());
+          }
+        });
+        
+        childProcess.on('close', async (code) => {
+          // Aguardar write stream finalizar completamente
+          await new Promise<void>((res, rej) => {
+            if (writeStream.writableEnded) {
+              res();
+              return;
+            }
+            writeStream.on('finish', () => res());
+            writeStream.on('error', (err) => rej(err));
+            // Forçar finalização se ainda não terminou
+            setTimeout(() => {
+              if (!writeStream.writableEnded) {
+                writeStream.end();
+              }
+              res();
+            }, 1000);
+          });
+          
+          try {
+            // Ler do arquivo - verificar tamanho primeiro
+            const stats = fs.statSync(tempOutputPath);
+            const fileSizeMB = stats.size / (1024 * 1024);
+            console.log(`[Go Processor] Tamanho do JSON: ${fileSizeMB.toFixed(2)} MB`);
+            
+            // Se arquivo muito grande (>500MB), avisar mas tentar parsear mesmo assim
+            if (fileSizeMB > 500) {
+              console.warn(`[Go Processor] AVISO: Arquivo JSON muito grande (${fileSizeMB.toFixed(2)} MB). Pode demorar para parsear.`);
+            }
+            
+            // Ler arquivo em chunks para evitar problemas de memória
+            const jsonString = fs.readFileSync(tempOutputPath, 'utf-8');
+            
+            if (!jsonString || jsonString.trim().length === 0) {
+              throw new Error('Nenhum dado recebido do processador Go');
+            }
+            
+            // Parse do JSON retornado pelo Go (com timeout implícito)
+            let goData;
+            try {
+              goData = JSON.parse(jsonString);
+            } catch (parseErr: any) {
+              // Se falhar, tentar ler apenas parte do arquivo para debug
+              const sample = jsonString.substring(Math.max(0, parseErr.message.match(/position (\d+)/)?.[1] || 0) - 100, 
+                (parseErr.message.match(/position (\d+)/)?.[1] || 0) + 100);
+              console.error(`[Go Processor] Erro no parse JSON próximo à posição ${parseErr.message.match(/position (\d+)/)?.[1]}: ${sample}`);
+              throw parseErr;
+            }
+            
+            // Limpar arquivo temporário
+            try {
+              fs.unlinkSync(tempOutputPath);
+            } catch {}
+            
+            // Converter dados do Go para o formato AnalysisData esperado pelo frontend
+            const analysisData: AnalysisData = convertGoDataToAnalysisData(goData, job.type);
+            
+            // Armazenar também os dados brutos do Go para uso no chatbot
+            (job as any).rawGoData = goData;
+            
+            job.analysis = analysisData;
+            console.log(`✅ Análise concluída: ${goData.events?.length || 0} eventos, ${goData.radarReplay?.length || 0} snapshots processados`);
+            
+            job.progress = 100;
+            job.status = 'completed';
+            job.updatedAt = new Date();
+            
+            resolve();
+          } catch (parseError: any) {
+            // Limpar arquivo temporário em caso de erro
+            try {
+              if (fs.existsSync(tempOutputPath)) {
+                fs.unlinkSync(tempOutputPath);
+              }
+            } catch {}
+            
+            if (code !== 0) {
+              reject(new Error(`Processador Go retornou código ${code}. Erro: ${stderrData.substring(0, 500) || 'desconhecido'}`));
+            } else {
+              reject(new Error(`Erro ao parsear JSON do Go: ${parseError.message}`));
+            }
+          }
+        });
+        
+        childProcess.on('error', (error) => {
+          writeStream.destroy();
+          // Limpar arquivo temporário em caso de erro
+          try {
+            if (fs.existsSync(tempOutputPath)) {
+              fs.unlinkSync(tempOutputPath);
+            }
+          } catch {}
+          reject(error);
+        });
+        
+        // Timeout de 5 minutos
+        const timeout = setTimeout(() => {
+          childProcess.kill();
+          writeStream.destroy();
+          reject(new Error('Timeout: processador Go demorou mais de 5 minutos'));
+        }, 300000);
+        
+        childProcess.on('close', () => {
+          clearTimeout(timeout);
+        });
       });
-
-      // Parse do JSON retornado pelo Go
-      const goData = JSON.parse(stdout);
       
-      // Converter dados do Go para o formato AnalysisData esperado pelo frontend
-      const analysisData: AnalysisData = convertGoDataToAnalysisData(goData, job.type);
-      
-      // Armazenar também os dados brutos do Go para uso no chatbot
-      (job as any).rawGoData = goData;
-      
-      job.analysis = analysisData;
-      console.log(`✅ Análise concluída: ${goData.events.length} eventos processados`);
     } catch (goError: any) {
       // Se o binário Go não existir ou der erro, usar mock como fallback
       console.warn('Erro ao executar processador Go, usando mock:', goError.message);
       const { buildMockAnalysis } = await import('./mockAnalysis');
       job.analysis = buildMockAnalysis(job.type);
+      
+      job.progress = 100;
+      job.status = 'completed';
+      job.updatedAt = new Date();
     }
-
-    job.progress = 100;
-    job.status = 'completed';
-    job.updatedAt = new Date();
   } catch (error) {
     job.status = 'failed';
     job.error = error instanceof Error ? error.message : 'Erro desconhecido ao gerar análise.';

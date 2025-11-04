@@ -117,17 +117,7 @@ ${hotspots}`;
   }
 
   if (lower.includes('radar') || lower.includes('rotac') || lower.includes('replay')) {
-    const moment = analysis.radarMoments[0];
-    if (moment) {
-      const players = moment.players
-        .map(player => `• ${player.name} (${player.role.toUpperCase()}): ${player.action}`)
-        .join('\n');
-      return `🗺️ Radar 2D destaca: ${moment.highlight}
-
-Callout: ${moment.callout} • Tempo: ${moment.clock}
-${players}`;
-    }
-    return '🗺️ Radar 2D pronto! Explore os momentos chave na aba correspondente.';
+    return `A funcionalidade de replay de demo foi removida. Use o heatmap para visualizar posições de kills e deaths.`;
   }
 
   if (lower.includes('econom')) {

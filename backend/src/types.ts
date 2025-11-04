@@ -15,23 +15,6 @@ export interface HeatmapHotspot {
   note: string;
 }
 
-export interface RadarPlayer {
-  name: string;
-  role: 't' | 'ct';
-  x: number;
-  y: number;
-  action: string;
-}
-
-export interface RadarMoment {
-  tick: number;
-  clock: string;
-  phase: 'início' | 'meio' | 'final';
-  callout: string;
-  highlight: string;
-  players: RadarPlayer[];
-}
-
 export interface RoundHighlight {
   round: number;
   result: string;
@@ -42,6 +25,107 @@ export interface EconomyStats {
   averageSpend: number;
   economyStrength: string;
   swings: string[];
+}
+
+export interface TradeKill {
+  round: number;
+  time: number;
+  victimSteamID: number;
+  victimName: string;
+  victim: string; // Para compatibilidade com frontend
+  killedBySteamID: number;
+  killedByName: string;
+  killer: string; // Para compatibilidade com frontend
+  tradedBy?: string;
+  tradedBySteamID?: number;
+  tradeTime?: number;
+  failedTrades: Array<{
+    player: string;
+    playerSteamID: number;
+    distance: number;
+  }>;
+  tradeType: 'successful' | 'failed';
+}
+
+export interface WeaponStats {
+  weapon: string;
+  kills: number;
+  headshots: number;
+  damage: number;
+}
+
+export interface EntryFrag {
+  round: number;
+  time: number;
+  playerSteamID: number;
+  playerName: string;
+  killedSteamID: number;
+  killedName: string;
+  wonRound: boolean;
+}
+
+export interface ClutchSituation {
+  round: number;
+  playerSteamID: number;
+  playerName: string;
+  situation: '1v1' | '1v2' | '1v3' | '1v4' | '1v5';
+  won: boolean;
+  enemiesAlive: number;
+  teammatesAlive: number;
+}
+
+export interface RoundPerformance {
+  round: number;
+  playerSteamID: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  wonRound: boolean;
+}
+
+export interface CriticalError {
+  round: number;
+  player: string;
+  playerSteamID: number;
+  type: 'bomb_carrier_death' | 'plant_failed' | 'clutch_lost' | 'early_death' | 'late_rotation';
+  description: string;
+}
+
+export interface Highlight {
+  round: number;
+  player: string;
+  playerSteamID: number;
+  type: '3k' | '4k' | 'ace' | 'clutch_1v2' | 'clutch_1v3' | 'clutch_1v4' | 'clutch_1v5';
+  description: string;
+}
+
+export interface TeamPlay {
+  playerSteamID: number;
+  assistsGiven: number;
+  tradesGiven: number;
+  tradesReceived: number;
+  mostAssistedPlayer?: {
+    playerSteamID: number;
+    assists: number;
+  };
+  mostTradedBy?: {
+    playerSteamID: number;
+    trades: number;
+  };
+}
+
+export interface PlayerRole {
+  playerSteamID: number;
+  primaryRole: string;
+  roles: {
+    entry: number;
+    support: number;
+    lurker: number;
+    awper: number;
+    rifler: number;
+    anchor: number;
+    igl: number;
+  };
 }
 
 export interface PlayerStats {
@@ -56,6 +140,36 @@ export interface PlayerStats {
   kdRatio?: number;
   damage?: number;
   roundsPlayed?: number;
+  // Trades
+  successfulTrades?: number;
+  failedTrades?: number;
+  tradeKills?: TradeKill[];
+  // Entry Frags / First Kill
+  entryFrags?: number;
+  entryFragWins?: number;
+  entryFragLosses?: number;
+  // Clutches
+  clutch1v1Wins?: number;
+  clutch1v1Losses?: number;
+  clutch1v2Wins?: number;
+  clutch1v2Losses?: number;
+  clutch1v3Wins?: number;
+  clutch1v3Losses?: number;
+  clutch1v4Wins?: number;
+  clutch1v4Losses?: number;
+  clutch1v5Wins?: number;
+  clutch1v5Losses?: number;
+  clutch1v1Winrate?: number;
+  clutch1v2Rate?: number;
+  clutch1v3Rate?: number;
+  // Kill Timings
+  firstKillTiming?: number;
+  // Round Performance
+  consistencyScore?: number;
+  avgKillsWin?: number;
+  avgKillsLoss?: number;
+  // Weapon Stats
+  weaponStats?: WeaponStats[];
 }
 
 export interface TeamStats {
@@ -103,7 +217,6 @@ export interface AnalysisData {
   heatmapHotspots: HeatmapHotspot[];
   playerMetrics?: MetricCard[];
   teamMetrics?: MetricCard[];
-  radarMoments: RadarMoment[];
   roundHighlights: RoundHighlight[];
   recommendations: string[];
   economy: EconomyStats;
@@ -122,6 +235,32 @@ export interface AnalysisData {
   warmupRounds?: number;
   knifeRound?: boolean;
   source?: string; // "GC" ou "Valve"
+  // Heatmap de kills e deaths
+  killHeatmap?: Array<{ x: number; y: number; z: number; count: number }>;
+  deathHeatmap?: Array<{ x: number; y: number; z: number; count: number }>;
+  // Eventos de kill com posições para filtro
+  killEventsWithPositions?: Array<{
+    round: number;
+    time: number;
+    killerSteamID: number;
+    killerName: string;
+    killerPosition: { x: number; y: number; z: number } | null;
+    victimSteamID: number;
+    victimName: string;
+    victimPosition: { x: number; y: number; z: number } | null;
+  }>;
+  // Estatísticas avançadas
+  tradeKills?: TradeKill[];
+  entryFrags?: EntryFrag[];
+  clutchSituations?: ClutchSituation[];
+  weaponStats?: WeaponStats[];
+  killTimings?: Array<{ playerSteamID: number; playerName: string; averageTime: number }>;
+  roundPerformances?: RoundPerformance[];
+  criticalErrors?: CriticalError[];
+  highlights?: Highlight[];
+  teamPlay?: TeamPlay[];
+  playerRoles?: PlayerRole[];
+  aiSuggestions?: string[];
 }
 
 export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';

@@ -1,55 +1,48 @@
-# Dependencies
+# Dependências
 node_modules/
+**/node_modules/
+
+# Build
+dist/
+build/
+.next/
+out/
+
+# Arquivos temporários
+*.tmp
+*.temp
+backend/storage/temp/*.json
+backend/storage/uploads/*.dem
+backend/storage/uploads/*.dem.gz
+
+# Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build outputs
-dist/
-build/
-*.tsbuildinfo
-
-# Environment variables
+# Arquivos de ambiente
 .env
 .env.local
 .env.*.local
 
-# IDE
-.vscode/
-.idea/
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
 *.swp
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Storage (uploads, etc)
-storage/uploads/*
-!storage/uploads/.gitkeep
-storage/*.dem
-backend/storage/uploads/*.dem
-backend/storage/uploads/*
-!backend/storage/uploads/.gitkeep
-
-# Demo files (muito grandes para git)
-*.dem
+# Arquivos de teste/output
+*.test.json
+output-*.json
+backend/processor/output*.json
 backend/processor/*.dem
 
-# Go binaries (incluir no git para funcionar imediatamente)
-# Descomente a linha abaixo se NÃO quiser incluir o .exe no git
-# backend/processor/demo-processor.exe
-# backend/processor/demo-processor
+# IDE
+.vscode/
+.idea/
+*.sublime-*
 
-# Logs
-logs/
-*.log
-
-# Temporary files
-*.tmp
-*.temp
-output.json
-output-reduced.json
-backend/processor/output*.json
-
+# TypeScript
+*.tsbuildinfo
