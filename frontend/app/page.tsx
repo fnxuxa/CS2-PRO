@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair, Shield, Skull, TrendingDown, Play, Pause, SkipForward, SkipBack } from 'lucide-react';
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 type View = 'landing' | 'upload-area' | 'select-analysis' | 'processing' | 'results';
 type Trend = 'up' | 'down' | 'neutral';
@@ -294,7 +295,15 @@ interface AnalysisData {
   clutchSituations?: ClutchSituation[];
   killHeatmap?: Array<{ x: number; y: number; z: number; count: number }>;
   deathHeatmap?: Array<{ x: number; y: number; z: number; count: number }>;
-  killEventsWithPositions?: Array<{ killer?: { steamID?: number; position?: { x: number; y: number; z: number } }; victim?: { steamID?: number; position?: { x: number; y: number; z: number } } }>;
+  killEventsWithPositions?: Array<{ 
+    round?: number;
+    killerSteamID?: number;
+    killerTeam?: 'CT' | 'T';
+    killerPosition?: { x: number; y: number; z: number };
+    victimSteamID?: number;
+    victimTeam?: 'CT' | 'T';
+    victimPosition?: { x: number; y: number; z: number };
+  }>;
   // Estatísticas avançadas
   roundPerformances?: RoundPerformance[];
   criticalErrors?: CriticalError[];
@@ -310,7 +319,15 @@ interface Heatmap2DViewerProps {
   killHeatmap: Array<{ x: number; y: number; z: number; count: number }>;
   deathHeatmap: Array<{ x: number; y: number; z: number; count: number }>;
   playerSteamID?: number | null; // SteamID do jogador para filtrar (opcional)
-  killEvents?: Array<{ killer?: { steamID?: number; position?: { x: number; y: number; z: number } }; victim?: { steamID?: number; position?: { x: number; y: number; z: number } } }>; // Eventos de kill para filtrar
+  killEvents?: Array<{ 
+    round?: number;
+    killerSteamID?: number;
+    killerTeam?: 'CT' | 'T';
+    killerPosition?: { x: number; y: number; z: number };
+    victimSteamID?: number;
+    victimTeam?: 'CT' | 'T';
+    victimPosition?: { x: number; y: number; z: number };
+  }>; // Eventos de kill para filtrar
 }
 
 const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap, deathHeatmap, playerSteamID, killEvents }) => {
@@ -358,8 +375,12 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     const deathPoints = new Map<string, number>();
     killEvents.forEach((event: any) => {
       // Verificar se o jogador selecionado foi a vítima
-      if (event.victimSteamID === playerSteamID && event.victimPosition) {
-        const pos = event.victimPosition;
+      // Suportar ambos os formatos (antigo e novo)
+      const victimID = event.victimSteamID || event.victim?.steamID;
+      const victimPos = event.victimPosition || event.victim?.position;
+      
+      if (victimID === playerSteamID && victimPos) {
+        const pos = victimPos;
         const key = `${Math.floor(pos.x / 50)}_${Math.floor(pos.y / 50)}_${Math.floor(pos.z / 50)}`;
         deathPoints.set(key, (deathPoints.get(key) || 0) + 1);
       }
@@ -847,6 +868,8 @@ const CS2ProAnalyzerApp = () => {
   const [selectedTab, setSelectedTab] = useState<'overview' | 'players' | 'teams' | 'rounds' | 'heatmap' | 'chat'>('overview');
   const [teamComparison, setTeamComparison] = useState<'both' | 'ct' | 't'>('both');
   const [selectedPlayerFilter, setSelectedPlayerFilter] = useState<string>('all'); // Filtro de jogador: 'all' ou steamID
+  const [selectedPlayersForComparison, setSelectedPlayersForComparison] = useState<number[]>([]); // Jogadores selecionados para comparação
+  const [hoveredPlayer, setHoveredPlayer] = useState<number | null>(null); // SteamID do jogador com hover
 
   // Função para extrair nomes dos times do nome do arquivo
   const extractTeamNames = (fileName: string): { team1?: string; team2?: string } | null => {
@@ -1545,53 +1568,111 @@ const CS2ProAnalyzerApp = () => {
 
   // ==================== PROCESSING PAGE ====================
   if (currentPage === 'processing') {
+    // Determinar etapa atual baseada no progresso
+    const getCurrentStep = () => {
+      if (progress < 20) return 0;
+      if (progress < 40) return 1;
+      if (progress < 70) return 2;
+      if (progress < 90) return 3;
+      return 4;
+    };
+
+    const steps = [
+      { label: 'Processando arquivo demo', description: 'Lendo e validando estrutura do arquivo .dem' },
+      { label: 'Extraindo eventos', description: 'Coletando kills, deaths, rounds e eventos da partida' },
+      { label: 'Calculando estatísticas', description: 'Processando trades, clutches, first kills e análises avançadas' },
+      { label: 'Gerando relatório com IA', description: 'IA analisando e criando insights profissionais' },
+      { label: 'Finalizando', description: 'Preparando visualização dos resultados' },
+    ];
+
+    const currentStep = getCurrentStep();
+    const statusMessages: Record<string, string> = {
+      idle: 'Aguardando',
+      queued: 'Na fila de processamento',
+      processing: 'Processando',
+      completed: 'Concluído',
+      failed: 'Falhou',
+    };
+
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center px-6">
-        <div className="max-w-lg w-full bg-gray-900 border-2 border-orange-500/30 rounded-3xl p-12 text-center shadow-2xl shadow-orange-500/20">
-          <div className="relative w-28 h-28 mx-auto mb-10">
+      <div className="min-h-screen bg-black flex items-center justify-center px-4 sm:px-6 animate-fade-in">
+        <div className="max-w-2xl w-full bg-gradient-to-br from-gray-900 to-black border-2 border-orange-500/30 rounded-3xl p-8 sm:p-12 text-center shadow-2xl shadow-orange-500/20 animate-scale-in">
+          {/* Animated Loader */}
+          <div className="relative w-28 h-28 mx-auto mb-8">
             <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-orange-600 rounded-full animate-pulse shadow-2xl shadow-orange-500/50"></div>
             <Loader2 className="relative w-28 h-28 text-black animate-spin" />
           </div>
           
-          <h3 className="text-4xl font-black text-white mb-6">Processando Demo</h3>
-          <p className="text-gray-400 mb-10 text-xl">
-            IA analisando <span className="text-orange-500 font-bold">{uploadedDemo?.name}</span>
-          </p>
-          <p className="text-sm text-gray-500 mb-8 uppercase tracking-[0.3em]">
-            Status: {
-              jobStatus === 'idle' ? 'Aguardando' :
-              jobStatus === 'queued' ? 'Na fila' :
-              jobStatus === 'processing' ? 'Processando' :
-              jobStatus === 'completed' ? 'Concluído' :
-              'Falhou'
-            }
+          {/* Title */}
+          <h3 className="text-3xl sm:text-4xl font-black text-white mb-4 animate-slide-in">Processando Demo</h3>
+          <p className="text-gray-400 mb-6 text-lg sm:text-xl animate-fade-in-delay">
+            Analisando <span className="text-orange-500 font-bold">{uploadedDemo?.name}</span>
           </p>
           
-          <div className="bg-black rounded-full h-4 overflow-hidden mb-10 shadow-inner">
-            <div 
-              className="bg-gradient-to-r from-orange-500 to-orange-600 h-full shadow-lg shadow-orange-500/50 transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            ></div>
+          {/* Status Badge */}
+          <div className="inline-flex items-center gap-2 bg-orange-500/20 border border-orange-500/50 rounded-full px-4 py-2 mb-8 animate-fade-in-delay-2">
+            <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+            <p className="text-sm text-orange-400 font-semibold uppercase tracking-wider">
+              {statusMessages[jobStatus] || 'Processando'}
+            </p>
           </div>
           
-          <ul className="space-y-4 text-left">
-            <li className={`flex items-center text-lg ${progress > 20 ? 'text-green-400' : 'text-gray-600'}`}>
-              {progress > 20 ? <Check className="w-6 h-6 mr-3" /> : <div className="w-6 h-6 mr-3 border-2 border-gray-700 rounded-full"></div>}
-              Parsing demo file
-            </li>
-            <li className={`flex items-center text-lg ${progress > 40 ? 'text-green-400' : progress > 20 ? 'text-orange-500' : 'text-gray-600'}`}>
-              {progress > 40 ? <Check className="w-6 h-6 mr-3" /> : progress > 20 ? <Loader2 className="w-6 h-6 mr-3 animate-spin" /> : <div className="w-6 h-6 mr-3 border-2 border-gray-700 rounded-full"></div>}
-              Extraindo eventos
-            </li>
-            <li className={`flex items-center text-lg ${progress > 70 ? 'text-green-400' : progress > 40 ? 'text-orange-500' : 'text-gray-600'}`}>
-              {progress > 70 ? <Check className="w-6 h-6 mr-3" /> : progress > 40 ? <Loader2 className="w-6 h-6 mr-3 animate-spin" /> : <div className="w-6 h-6 mr-3 border-2 border-gray-700 rounded-full"></div>}
-              Calculando estatísticas avançadas
-            </li>
-            <li className={`flex items-center text-lg ${progress > 90 ? 'text-green-400' : progress > 70 ? 'text-orange-500' : 'text-gray-600'}`}>
-              {progress > 90 ? <Check className="w-6 h-6 mr-3" /> : progress > 70 ? <Loader2 className="w-6 h-6 mr-3 animate-spin" /> : <div className="w-6 h-6 mr-3 border-2 border-gray-700 rounded-full"></div>}
-              Gerando relatório com IA
-            </li>
-          </ul>
+          {/* Progress Bar */}
+          <div className="mb-8 animate-fade-in-delay-2">
+            <div className="bg-black/50 rounded-full h-3 overflow-hidden shadow-inner">
+              <div 
+                className="bg-gradient-to-r from-orange-500 via-orange-600 to-orange-500 h-full shadow-lg shadow-orange-500/50 transition-all duration-500 ease-out relative overflow-hidden"
+                style={{ width: `${progress}%` }}
+              >
+                <div className="absolute inset-0 shimmer"></div>
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mt-2">{Math.round(progress)}% concluído</p>
+          </div>
+          
+          {/* Steps List */}
+          <div className="space-y-4 text-left animate-fade-in-delay-3">
+            {steps.map((step, index) => {
+              const isCompleted = index < currentStep;
+              const isActive = index === currentStep;
+              const isPending = index > currentStep;
+              
+              return (
+                <div
+                  key={index}
+                  className={`flex items-start gap-4 p-4 rounded-xl transition-all duration-300 ${
+                    isCompleted 
+                      ? 'bg-green-500/10 border border-green-500/30' 
+                      : isActive
+                      ? 'bg-orange-500/10 border border-orange-500/30 scale-105'
+                      : 'bg-gray-800/30 border border-gray-700/30 opacity-60'
+                  }`}
+                >
+                  <div className="flex-shrink-0 mt-1">
+                    {isCompleted ? (
+                      <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                        <Check className="w-4 h-4 text-black" />
+                      </div>
+                    ) : isActive ? (
+                      <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full border-2 border-gray-600"></div>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-base sm:text-lg font-semibold mb-1 ${
+                      isCompleted ? 'text-green-400' : isActive ? 'text-orange-400' : 'text-gray-500'
+                    }`}>
+                      {step.label}
+                    </p>
+                    <p className="text-xs sm:text-sm text-gray-400">
+                      {step.description}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     );
@@ -1627,6 +1708,263 @@ const CS2ProAnalyzerApp = () => {
       keyEvents: [],
       detail: r.detail,
     }));
+
+    // Função para calcular distância entre dois pontos
+    const distance = (x1: number, y1: number, z1: number, x2: number, y2: number, z2: number): number => {
+      return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2 + (z2 - z1) ** 2);
+    };
+
+    // Função para identificar bombsite/zona do mapa baseado em coordenadas
+    const getMapZone = (x: number, y: number, z: number, mapName: string): string => {
+      const absX = Math.abs(x);
+      const absY = Math.abs(y);
+      
+      // Coordenadas aproximadas dos bombsites (baseadas em dados reais de CS2)
+      // Formato: { x, y, z, radius }
+      const mapSites: Record<string, { siteA: { x: number; y: number; z: number; radius: number }, siteB: { x: number; y: number; z: number; radius: number } }> = {
+        'de_mirage': {
+          siteA: { x: 2000, y: 700, z: 0, radius: 800 },
+          siteB: { x: -2000, y: 700, z: 0, radius: 800 },
+        },
+        'de_dust2': {
+          siteA: { x: 0, y: 2000, z: 0, radius: 600 },
+          siteB: { x: -2000, y: 2000, z: 0, radius: 600 },
+        },
+        'de_inferno': {
+          siteA: { x: 2500, y: 0, z: 0, radius: 700 },
+          siteB: { x: -2500, y: 0, z: 0, radius: 700 },
+        },
+        'de_ancient': {
+          siteA: { x: 1500, y: 2000, z: 0, radius: 700 },
+          siteB: { x: -2000, y: 2000, z: 0, radius: 700 },
+        },
+        'de_vertigo': {
+          siteA: { x: 0, y: 2500, z: 500, radius: 800 },
+          siteB: { x: 0, y: -2500, z: 500, radius: 800 },
+        },
+        'de_anubis': {
+          siteA: { x: 2000, y: 2000, z: 0, radius: 700 },
+          siteB: { x: -2000, y: 2000, z: 0, radius: 700 },
+        },
+        'de_overpass': {
+          siteA: { x: 2500, y: 0, z: 0, radius: 700 },
+          siteB: { x: -2500, y: 0, z: 0, radius: 700 },
+        },
+        'de_nuke': {
+          siteA: { x: 2000, y: 2000, z: 0, radius: 700 },
+          siteB: { x: -2000, y: 2000, z: 0, radius: 700 },
+        },
+      };
+      
+      const sites = mapSites[mapName];
+      
+      // Se temos sites específicos do mapa, usar distância
+      if (sites) {
+        const distA = distance(x, y, z, sites.siteA.x, sites.siteA.y, sites.siteA.z);
+        const distB = distance(x, y, z, sites.siteB.x, sites.siteB.y, sites.siteB.z);
+        
+        if (distA <= sites.siteA.radius) return 'Site A';
+        if (distB <= sites.siteB.radius) return 'Site B';
+        
+        // Verificar se está próximo de um dos sites (mas não dentro)
+        if (distA < distB + 500 && distA < 1500) return 'Long A';
+        if (distB < distA + 500 && distB < 1500) return 'Long B';
+      }
+      
+      // Fallback melhorado: usar coordenadas relativas
+      // A maioria dos mapas tem Site A no lado positivo de X e Site B no lado negativo
+      if (absX > 1000) {
+        // Está longe do centro, provavelmente em um bombsite
+        if (x > 500) return 'Long A'; // Lado positivo = Site A
+        if (x < -500) return 'Long B'; // Lado negativo = Site B
+      }
+      
+      // Área central = Mid
+      if (absX < 1000 && absY < 1000) {
+        return 'Mid';
+      }
+      
+      // Áreas extremas = Spawn
+      if (absY > 2000) return 'Spawn';
+      
+      return 'Other';
+    };
+
+    // Função para determinar se uma kill foi em área "agressiva" (território inimigo)
+    const isAggressiveKill = (
+      killPosition: { x: number; y: number; z: number },
+      killerTeam: 'CT' | 'T',
+      round: number,
+      mapName: string
+    ): boolean => {
+      const zone = getMapZone(killPosition.x, killPosition.y, killPosition.z, mapName);
+      
+      // Determinar qual lado do mapa é controlado por qual time baseado no round
+      // Rounds 1-12: CT controla lado positivo (X > 0), T controla lado negativo (X < 0)
+      // Rounds 13+: CT controla lado negativo (X < 0), T controla lado positivo (X > 0)
+      const isFirstHalf = round <= 12;
+      
+      // Determinar se a kill foi no lado "oposto" (território inimigo)
+      // Uma kill é agressiva se foi feita no lado do mapa que o time inimigo normalmente controla
+      
+      if (killerTeam === 'CT') {
+        if (isFirstHalf) {
+          // CT no primeiro half controla lado positivo (X > 0)
+          // Kill agressiva = lado negativo (X < 0) OU Site B OU Long B OU Mid em território inimigo
+          if (zone === 'Site B' || zone === 'Long B') return true;
+          // Kill em X negativo = território T (agressivo)
+          if (killPosition.x < -500) return true;
+          // Kill no meio do mapa mas longe do centro CT = agressivo
+          if (zone === 'Mid' && killPosition.x < -200) return true;
+          return false;
+        } else {
+          // CT no segundo half controla lado negativo (X < 0) após troca
+          // Kill agressiva = lado positivo (X > 0) OU Site A OU Long A
+          if (zone === 'Site A' || zone === 'Long A') return true;
+          // Kill em X positivo = território T (agressivo)
+          if (killPosition.x > 500) return true;
+          // Kill no meio do mapa mas longe do centro CT = agressivo
+          if (zone === 'Mid' && killPosition.x > 200) return true;
+          return false;
+        }
+      } else {
+        // T (Terrorists)
+        if (isFirstHalf) {
+          // T no primeiro half controla lado negativo (X < 0)
+          // Kill agressiva = lado positivo (X > 0) OU Site A OU Long A OU Mid em território inimigo
+          if (zone === 'Site A' || zone === 'Long A') return true;
+          // Kill em X positivo = território CT (agressivo)
+          if (killPosition.x > 500) return true;
+          // Kill no meio do mapa mas longe do centro T = agressivo
+          if (zone === 'Mid' && killPosition.x > 200) return true;
+          return false;
+        } else {
+          // T no segundo half controla lado positivo (X > 0) após troca
+          // Kill agressiva = lado negativo (X < 0) OU Site B OU Long B
+          if (zone === 'Site B' || zone === 'Long B') return true;
+          // Kill em X negativo = território CT (agressivo)
+          if (killPosition.x < -500) return true;
+          // Kill no meio do mapa mas longe do centro T = agressivo
+          if (zone === 'Mid' && killPosition.x < -200) return true;
+          return false;
+        }
+      }
+    };
+
+    // Função para calcular estatísticas do jogador (bombsite, agressividade)
+    const calculatePlayerInsights = (playerSteamID: number) => {
+      if (!analysis?.killEventsWithPositions || !analysis.map) {
+        return null;
+      }
+
+      const player = players.find(p => p.steamID === playerSteamID);
+      if (!player) return null;
+
+      const bombsiteCounts: Record<string, number> = { 'Site A': 0, 'Site B': 0, 'Mid': 0, 'Other': 0 };
+      let aggressiveKills = 0;
+      let totalKills = 0;
+      let killsInOwnTerritory = 0;
+
+      // Analisar kills do jogador
+      analysis.killEventsWithPositions.forEach((event: any) => {
+        if (event.killerSteamID === playerSteamID && event.killerPosition) {
+          const pos = event.killerPosition;
+          const zone = getMapZone(pos.x, pos.y, pos.z, analysis.map || 'unknown');
+          const round = event.round || 1; // Usar round do evento ou assumir 1
+          
+          totalKills++;
+          
+          // Contar por bombsite
+          if (zone === 'Site A') bombsiteCounts['Site A']++;
+          else if (zone === 'Site B') bombsiteCounts['Site B']++;
+          else if (zone === 'Mid') bombsiteCounts['Mid']++;
+          else bombsiteCounts['Other']++;
+
+          // Verificar agressividade (precisa do round para determinar qual lado controla)
+          // Usar o time do jogador no momento da kill (se disponível no evento)
+          const killerTeamAtKill: 'CT' | 'T' = event.killerTeam || player.team;
+          
+          // Verificar se a kill foi agressiva
+          const isAggressive = isAggressiveKill(pos, killerTeamAtKill, round, analysis.map || 'unknown');
+          
+          if (isAggressive) {
+            aggressiveKills++;
+          } else {
+            killsInOwnTerritory++;
+          }
+        }
+
+        // Também contar deaths para ter visão completa
+        if (event.victimSteamID === playerSteamID && event.victimPosition) {
+          const pos = event.victimPosition;
+          const zone = getMapZone(pos.x, pos.y, pos.z, analysis.map || 'unknown');
+          
+          if (zone === 'Site A') bombsiteCounts['Site A']++;
+          else if (zone === 'Site B') bombsiteCounts['Site B']++;
+          else if (zone === 'Mid') bombsiteCounts['Mid']++;
+          else bombsiteCounts['Other']++;
+        }
+      });
+
+      // Determinar bombsite preferido
+      const totalActivity = bombsiteCounts['Site A'] + bombsiteCounts['Site B'] + bombsiteCounts['Mid'] + bombsiteCounts['Other'];
+      const preferredSite = totalActivity > 0 
+        ? Object.entries(bombsiteCounts).reduce((a, b) => bombsiteCounts[a[0]] > bombsiteCounts[b[0]] ? a : b)[0]
+        : 'N/A';
+
+      // Calcular percentuais
+      const siteAPercent = totalActivity > 0 ? (bombsiteCounts['Site A'] / totalActivity) * 100 : 0;
+      const siteBPercent = totalActivity > 0 ? (bombsiteCounts['Site B'] / totalActivity) * 100 : 0;
+      const midPercent = totalActivity > 0 ? (bombsiteCounts['Mid'] / totalActivity) * 100 : 0;
+
+      // Calcular taxa de agressividade
+      const aggressiveRate = totalKills > 0 ? (aggressiveKills / totalKills) * 100 : 0;
+      let playstyle = 'Equilibrado';
+      // Ajustar thresholds: > 50% = Agressivo, < 25% = Defensivo
+      if (aggressiveRate >= 50) playstyle = 'Agressivo';
+      else if (aggressiveRate <= 25) playstyle = 'Defensivo';
+
+      return {
+        preferredSite,
+        siteAPercent: siteAPercent.toFixed(1),
+        siteBPercent: siteBPercent.toFixed(1),
+        midPercent: midPercent.toFixed(1),
+        aggressiveRate: aggressiveRate.toFixed(1),
+        aggressiveKills,
+        totalKills,
+        playstyle,
+        killsInOwnTerritory,
+      };
+    };
+
+    // Função para determinar qual time real ganhou o round considerando troca de lado
+    // Assumindo que times trocam após 12 rounds (round 13 = lado trocado)
+    const getRealTeamName = (side: 'CT' | 'T', round: number): string => {
+      const ctTeam = teams.find(t => t.team === 'CT');
+      const tTeam = teams.find(t => t.team === 'T');
+      
+      if (!teamNames) {
+        // Fallback para nomes dos times se não houver extração do arquivo
+        if (side === 'CT') {
+          return ctTeam?.teamName || 'Counter-Terrorists';
+        } else {
+          return tTeam?.teamName || 'Terrorists';
+        }
+      }
+      
+      // Com nomes extraídos: team1 começa em CT, team2 em T
+      // Após 12 rounds (round 13+), os times trocam de lado
+      if (round <= 12) {
+        return side === 'CT' ? (teamNames.team1 || 'Time 1') : (teamNames.team2 || 'Time 2');
+      } else {
+        return side === 'CT' ? (teamNames.team2 || 'Time 2') : (teamNames.team1 || 'Time 1');
+      }
+    };
+
+    // Função para obter o nome do time vencedor real
+    const getWinnerTeamName = (round: DetailedRound): string => {
+      return getRealTeamName(round.winner, round.round);
+    };
     
     // Fallbacks para topPerformers
     const getTopPerformer = (key: 'mostKills' | 'mostAssists' | 'mostDeaths' | 'mostDamage' | 'bestKDRatio'): PlayerStats | null => {
@@ -1818,7 +2156,7 @@ const CS2ProAnalyzerApp = () => {
             </div>
 
             {/* Tabs de Navegação */}
-            <div className="flex gap-2 overflow-x-auto pb-2">
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
               {[
                 { id: 'overview', label: 'Visão Geral', icon: BarChart3 },
                 { id: 'players', label: 'Jogadores', icon: Users },
@@ -1830,25 +2168,27 @@ const CS2ProAnalyzerApp = () => {
                 <button
                   key={id}
                   onClick={() => setSelectedTab(id as any)}
-                  className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap ${
+                  className={`flex items-center gap-2 px-4 sm:px-6 py-3 rounded-xl font-bold transition-all-smooth whitespace-nowrap hover:scale-105 ${
                     selectedTab === id
-                      ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-black shadow-lg shadow-orange-500/50'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                      ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-black shadow-lg shadow-orange-500/50 scale-105'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  {label}
+                  <span className="hidden sm:inline">{label}</span>
+                  <span className="sm:hidden">{label.split(' ')[0]}</span>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Conteúdo das Tabs */}
+          <div className="tab-content">
           {selectedTab === 'overview' && (
-            <div className="space-y-8">
+            <div className="space-y-8 animate-fade-in">
               {/* MVP e Top Performers */}
               <div className="grid lg:grid-cols-3 gap-6">
-                <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-8 shadow-2xl shadow-orange-500/30">
+                <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 border-4 border-orange-500 rounded-3xl p-8 shadow-2xl shadow-orange-500/30 card-hover">
                   <div className="flex items-center gap-3 mb-4">
                     <Crown className="w-8 h-8 text-orange-500" />
                     <h3 className="text-2xl font-bold text-white">MVP</h3>
@@ -1861,7 +2201,7 @@ const CS2ProAnalyzerApp = () => {
                 
                 {(topPerformers || players.length > 0) && (
                   <>
-                    <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-6">
+                    <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-6 card-hover">
                       <div className="flex items-center gap-2 mb-3">
                         <Skull className="w-5 h-5 text-red-400" />
                         <h4 className="text-lg font-bold text-white">Mais Kills</h4>
@@ -1875,7 +2215,7 @@ const CS2ProAnalyzerApp = () => {
                       <p className="text-sm text-gray-400 mt-1">{getTopPerformer('mostKills')?.kills || playersByKills[0]?.kills || 0} eliminações</p>
                     </div>
                     
-                    <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-6">
+                    <div className="bg-gray-900 border-2 border-gray-800 rounded-2xl p-6 card-hover">
                       <div className="flex items-center gap-2 mb-3">
                         <Target className="w-5 h-5 text-blue-400" />
                         <h4 className="text-lg font-bold text-white">Mais Assists</h4>
@@ -1989,6 +2329,7 @@ const CS2ProAnalyzerApp = () => {
 
           {/* Tab: Players */}
           {selectedTab === 'players' && (
+            <div className="animate-fade-in">
             <div className="space-y-8">
               {/* Top Performers Cards */}
               <div className="grid md:grid-cols-5 gap-4">
@@ -2042,9 +2383,155 @@ const CS2ProAnalyzerApp = () => {
                 )}
               </div>
 
+              {/* Comparação de Jogadores */}
+              {selectedPlayersForComparison.length > 0 && (
+                <div className="bg-gray-900 border-2 border-orange-500/30 rounded-3xl p-8 animate-fade-in">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-2xl font-bold text-white flex items-center gap-3">
+                      <BarChart3 className="w-6 h-6 text-orange-400" />
+                      Comparação de Jogadores ({selectedPlayersForComparison.length})
+                    </h3>
+                    <button
+                      onClick={() => setSelectedPlayersForComparison([])}
+                      className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      Limpar Seleção
+                    </button>
+                  </div>
+                  
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+                    {selectedPlayersForComparison.map((steamID) => {
+                      const player = players.find(p => p.steamID === steamID);
+                      if (!player) return null;
+                      
+                      return (
+                        <div key={steamID} className="bg-black/40 border-2 border-orange-500/30 rounded-xl p-6 card-hover">
+                          <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-xl font-bold text-white">{player.name}</h4>
+                            <button
+                              onClick={() => setSelectedPlayersForComparison(prev => prev.filter(id => id !== steamID))}
+                              className="text-gray-400 hover:text-red-400 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <p className="text-gray-400">Kills</p>
+                              <p className="text-2xl font-bold text-green-400">{player.kills}</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-400">Deaths</p>
+                              <p className="text-2xl font-bold text-red-400">{player.deaths}</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-400">Assists</p>
+                              <p className="text-2xl font-bold text-blue-400">{player.assists}</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-400">K/D</p>
+                              <p className="text-2xl font-bold text-yellow-400">{player.kdRatio?.toFixed(2) || '0.00'}</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-400">ADR</p>
+                              <p className="text-2xl font-bold text-purple-400">{player.adr?.toFixed(1) || '0.0'}</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-400">HS%</p>
+                              <p className="text-2xl font-bold text-cyan-400">{(player.hsRate ? (player.hsRate * 100).toFixed(1) : '0.0')}%</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Gráfico Comparativo */}
+                  {selectedPlayersForComparison.length >= 2 && (
+                    <div className="bg-black/40 rounded-xl p-6 border border-gray-700">
+                      <h4 className="text-lg font-bold text-white mb-4">Comparação Visual</h4>
+                      <div className="space-y-4">
+                        {['kills', 'deaths', 'assists', 'kdRatio', 'adr', 'headshotRate'].map((stat) => {
+                          const statLabel: Record<string, string> = {
+                            kills: 'Kills',
+                            deaths: 'Deaths',
+                            assists: 'Assists',
+                            kdRatio: 'K/D Ratio',
+                            adr: 'ADR',
+                            headshotRate: 'HS%',
+                          };
+                          
+                          const selectedPlayersData = selectedPlayersForComparison
+                            .map(steamID => players.find(p => p.steamID === steamID))
+                            .filter(Boolean);
+                          
+                          const maxValue = Math.max(...selectedPlayersData.map(p => {
+                            let value = 0;
+                            if (stat === 'headshotRate') {
+                              value = ((p as any).headshotKills || (p as any).headshots || 0) / ((p as any).kills || 1) * 100;
+                            } else {
+                              value = (p as any)[stat] || 0;
+                            }
+                            return typeof value === 'number' ? value : 0;
+                          }));
+                          
+                          return (
+                            <div key={stat} className="space-y-2">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">{statLabel[stat]}</span>
+                                <span className="text-gray-500">{maxValue.toFixed(stat === 'kdRatio' ? 2 : stat === 'headshotRate' ? 1 : 0)}{stat === 'headshotRate' ? '%' : ''}</span>
+                              </div>
+                              <div className="space-y-2">
+                                {selectedPlayersData.map((player) => {
+                                  let value = 0;
+                                  if (stat === 'headshotRate') {
+                                    value = ((player as any).headshotKills || (player as any).headshots || 0) / ((player as any).kills || 1) * 100;
+                                  } else {
+                                    value = (player as any)[stat] || 0;
+                                  }
+                                  const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
+                                  
+                                  return (
+                                    <div key={player!.steamID} className="flex items-center gap-3">
+                                      <span className="text-white text-sm font-semibold w-24 truncate" title={player!.name}>
+                                        {player!.name.length > 12 ? `${player!.name.substring(0, 9)}...` : player!.name}
+                                      </span>
+                                      <div className="flex-1 bg-gray-800 rounded-full h-6 overflow-hidden">
+                                        <div
+                                          className="h-full bg-gradient-to-r from-orange-500 to-orange-600 transition-all duration-500 flex items-center justify-end pr-2"
+                                          style={{ width: `${percentage}%` }}
+                                        >
+                                          <span className="text-xs font-bold text-black">
+                                            {typeof value === 'number' ? value.toFixed(stat === 'kdRatio' ? 2 : stat === 'headshotRate' ? 1 : 0) : '0'}{stat === 'headshotRate' ? '%' : ''}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Tabela de Jogadores */}
               <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
-                <h3 className="text-2xl font-bold text-white mb-6">Estatísticas dos Jogadores</h3>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-2xl font-bold text-white">Estatísticas dos Jogadores</h3>
+                  {selectedPlayersForComparison.length > 0 && (
+                    <button
+                      onClick={() => setSelectedPlayersForComparison([])}
+                      className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      Limpar Seleção ({selectedPlayersForComparison.length})
+                    </button>
+                  )}
+                </div>
                 
                 {/* Filtros de ordenação */}
                 <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
@@ -2080,14 +2567,115 @@ const CS2ProAnalyzerApp = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {playersByKills.map((player, idx) => (
-                        <tr key={player.steamID} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                      {playersByKills.map((player, idx) => {
+                        const isSelected = selectedPlayersForComparison.includes(player.steamID);
+                        return (
+                        <tr key={player.steamID} className={`border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors ${isSelected ? 'bg-orange-500/10 border-orange-500/30' : ''}`}>
                           <td className="py-4 px-4">
                             <div className="flex items-center gap-3">
                               <span className="text-gray-500 font-bold">#{idx + 1}</span>
-                              <span className="text-white font-semibold truncate max-w-[200px]" title={player.name}>
-                                {player.name.length > 25 ? `${player.name.substring(0, 22)}...` : player.name}
-                              </span>
+                              <div 
+                                className="relative"
+                                onMouseEnter={() => setHoveredPlayer(player.steamID)}
+                                onMouseLeave={() => setHoveredPlayer(null)}
+                              >
+                                <span className="text-white font-semibold truncate max-w-[200px] cursor-help" title={player.name}>
+                                  {player.name.length > 25 ? `${player.name.substring(0, 22)}...` : player.name}
+                                </span>
+                                
+                                {/* Tooltip do Jogador */}
+                                {hoveredPlayer === player.steamID && (() => {
+                                  const insights = calculatePlayerInsights(player.steamID);
+                                  if (!insights) return null;
+                                  
+                                  return (
+                                    <div className="absolute left-0 top-full mt-2 z-50 w-80 bg-gray-900 border-2 border-orange-500/50 rounded-xl p-4 shadow-2xl animate-fade-in">
+                                      <div className="flex items-center gap-2 mb-3">
+                                        <User className="w-5 h-5 text-orange-400" />
+                                        <h4 className="text-lg font-bold text-white">{player.name}</h4>
+                                      </div>
+                                      
+                                      <div className="space-y-3">
+                                        {/* Bombsite Preferido */}
+                                        <div>
+                                          <div className="flex items-center justify-between mb-2">
+                                            <span className="text-sm text-gray-400">Bombsite Preferido</span>
+                                            <span className="text-sm font-bold text-orange-400">{insights.preferredSite}</span>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <div className="flex items-center justify-between text-xs">
+                                              <span className="text-gray-500">Site A</span>
+                                              <span className="text-white">{insights.siteAPercent}%</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-xs">
+                                              <span className="text-gray-500">Site B</span>
+                                              <span className="text-white">{insights.siteBPercent}%</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-xs">
+                                              <span className="text-gray-500">Mid</span>
+                                              <span className="text-white">{insights.midPercent}%</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        
+                                        {/* Agressividade */}
+                                        <div className="border-t border-gray-700 pt-3">
+                                          <div className="flex items-center justify-between mb-2">
+                                            <span className="text-sm text-gray-400">Estilo de Jogo</span>
+                                            <span className={`text-sm font-bold ${
+                                              insights.playstyle === 'Agressivo' ? 'text-red-400' :
+                                              insights.playstyle === 'Defensivo' ? 'text-blue-400' :
+                                              'text-yellow-400'
+                                            }`}>
+                                              {insights.playstyle}
+                                            </span>
+                                          </div>
+                                          <div className="space-y-1 text-xs">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-gray-500">Kills em área inimiga</span>
+                                              <span className="text-red-400 font-semibold">{insights.aggressiveKills} ({insights.aggressiveRate}%)</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-gray-500">Kills em área própria</span>
+                                              <span className="text-blue-400 font-semibold">{insights.killsInOwnTerritory}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        
+                                        {/* Estatísticas rápidas */}
+                                        <div className="border-t border-gray-700 pt-3">
+                                          <div className="grid grid-cols-2 gap-2 text-xs">
+                                            <div>
+                                              <span className="text-gray-500">Total Kills:</span>
+                                              <span className="text-white font-bold ml-2">{insights.totalKills}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-500">K/D:</span>
+                                              <span className="text-white font-bold ml-2">{(player.kdRatio || 0).toFixed(2)}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setSelectedPlayersForComparison(prev => prev.filter(id => id !== player.steamID));
+                                  } else {
+                                    setSelectedPlayersForComparison(prev => [...prev, player.steamID]);
+                                  }
+                                }}
+                                className={`ml-auto px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                                  isSelected
+                                    ? 'bg-orange-500 text-black hover:bg-orange-600'
+                                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                                }`}
+                              >
+                                {isSelected ? '✓ Selecionado' : 'Comparar'}
+                              </button>
                             </div>
                           </td>
                           <td className="text-center py-4 px-4">
@@ -2130,7 +2718,8 @@ const CS2ProAnalyzerApp = () => {
                             </span>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -2540,7 +3129,7 @@ const CS2ProAnalyzerApp = () => {
                         <div key={idx} className="bg-black/40 rounded-xl p-4 border border-gray-700">
                           <h4 className="text-white font-bold mb-2">{player.name}</h4>
                           <p className={`text-lg font-bold mb-3 ${
-                            role.primaryRole === 'Entry' || role.primaryRole === 'Entry Fragger' ? 'text-red-400' :
+                            role.primaryRole === 'Entry Fragger' ? 'text-red-400' :
                             role.primaryRole === 'Support' ? 'text-blue-400' :
                             role.primaryRole === 'Lurker' ? 'text-indigo-400' :
                             role.primaryRole === 'AWPer' ? 'text-yellow-400' :
@@ -2604,10 +3193,12 @@ const CS2ProAnalyzerApp = () => {
                 </div>
               )}
             </div>
+            </div>
           )}
 
           {/* Tab: Teams */}
           {selectedTab === 'teams' && (
+            <div className="animate-fade-in">
             <div className="space-y-8">
               {/* Comparação de Times */}
               <div className="grid lg:grid-cols-2 gap-6">
@@ -2694,11 +3285,210 @@ const CS2ProAnalyzerApp = () => {
                 ))}
               </div>
             </div>
+            </div>
           )}
 
           {/* Tab: Rounds */}
           {selectedTab === 'rounds' && (
+            <div className="animate-fade-in">
             <div className="space-y-8">
+              {/* Gráficos Interativos */}
+              <div className="grid lg:grid-cols-2 gap-6">
+                {/* Gráfico de Linha - Evolução Round-to-Round por Time Real */}
+                <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-6">
+                  <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-orange-400" />
+                    Evolução do Score por Round
+                  </h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={(() => {
+                      // Obter times reais com seus scores finais
+                      const ctTeam = teams.find(t => t.team === 'CT');
+                      const tTeam = teams.find(t => t.team === 'T');
+                      
+                      // Obter nomes dos times (pode ser de teamNames ou teamName dos times)
+                      const nameFromCT = teamNames?.team1 || ctTeam?.teamName;
+                      const nameFromT = teamNames?.team2 || tTeam?.teamName;
+                      
+                      // Calcular scores acumulados para ambos os times
+                      // Vamos calcular e depois verificar qual nome corresponde a qual score final
+                      const chartData = [];
+                      let teamCTScore = 0; // Score do time que começa em CT (rounds 1-12)
+                      let teamTScore = 0;  // Score do time que começa em T (rounds 1-12)
+                      
+                      for (let i = 0; i < detailedRounds.length; i++) {
+                        const r = detailedRounds[i];
+                        
+                        // Rounds 1-12: CT = time que começa em CT, T = time que começa em T
+                        // Rounds 13+: CT = time que começou em T, T = time que começou em CT
+                        if (r.round <= 12) {
+                          if (r.winner === 'CT') {
+                            teamCTScore++;
+                          } else {
+                            teamTScore++;
+                          }
+                        } else {
+                          // Após troca de lado
+                          if (r.winner === 'CT') {
+                            teamTScore++; // CT agora é o time que começou em T
+                          } else {
+                            teamCTScore++; // T agora é o time que começou em CT
+                          }
+                        }
+                        
+                        chartData.push({
+                          round: r.round,
+                          teamCTScore: teamCTScore,
+                          teamTScore: teamTScore,
+                        });
+                      }
+                      
+                      // Verificar qual time tem qual score final para atribuir os nomes corretos
+                      // O score final do time que começou em CT deve corresponder ao score do ctTeam atual
+                      // Mas precisamos verificar qual nome corresponde a qual score
+                      
+                      // Obter scores finais dos times (do analysis)
+                      const ctTeamFinalScore = ctTeam?.score || 0;
+                      const tTeamFinalScore = tTeam?.score || 0;
+                      
+                      // Determinar qual nome corresponde ao time que começou em CT
+                      // Comparar scores calculados com scores dos times
+                      // Se teamCTScore final = ctTeam.score, então nameFromCT é o time que começou em CT
+                      // Caso contrário, pode estar invertido
+                      
+                      let nameForTeamCT = nameFromCT || 'Time CT';
+                      let nameForTeamT = nameFromT || 'Time T';
+                      
+                      // Se os scores finais não batem, pode ser que os nomes estejam invertidos
+                      // Comparar o score final calculado do time que começou em CT com o score do ctTeam
+                      // Se não bater, pode ser que team1/team2 estejam invertidos no teamNames
+                      if (Math.abs(teamCTScore - ctTeamFinalScore) > Math.abs(teamCTScore - tTeamFinalScore)) {
+                        // Os scores não batem, provavelmente os nomes estão invertidos
+                        // Inverter os nomes
+                        nameForTeamCT = nameFromT || 'Time T';
+                        nameForTeamT = nameFromCT || 'Time CT';
+                      }
+                      
+                      // Criar objeto com nomes corretos
+                      const dataWithNames = chartData.map(d => {
+                        const result: any = { round: d.round };
+                        result[nameForTeamCT] = d.teamCTScore;
+                        result[nameForTeamT] = d.teamTScore;
+                        return result;
+                      });
+                      
+                      return dataWithNames;
+                    })()}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis dataKey="round" stroke="#9CA3AF" />
+                      <YAxis stroke="#9CA3AF" />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }}
+                      />
+                      <Legend />
+                      <Line 
+                        type="monotone" 
+                        dataKey={(() => {
+                          const nameFromCT = teamNames?.team1 || teams.find(t => t.team === 'CT')?.teamName || 'Time CT';
+                          const nameFromT = teamNames?.team2 || teams.find(t => t.team === 'T')?.teamName || 'Time T';
+                          const ctTeam = teams.find(t => t.team === 'CT');
+                          const tTeam = teams.find(t => t.team === 'T');
+                          
+                          // Calcular scores finais para verificar qual nome usar
+                          let teamCTScore = 0;
+                          let teamTScore = 0;
+                          for (const r of detailedRounds) {
+                            if (r.round <= 12) {
+                              if (r.winner === 'CT') teamCTScore++;
+                              else teamTScore++;
+                            } else {
+                              if (r.winner === 'CT') teamTScore++;
+                              else teamCTScore++;
+                            }
+                          }
+                          
+                          // Verificar qual nome corresponde ao time que começou em CT
+                          if (Math.abs(teamCTScore - (ctTeam?.score || 0)) > Math.abs(teamCTScore - (tTeam?.score || 0))) {
+                            return nameFromT;
+                          }
+                          return nameFromCT;
+                        })()}
+                        stroke="#3B82F6" 
+                        strokeWidth={2} 
+                        dot={{ fill: '#3B82F6', r: 4 }} 
+                        connectNulls={false}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey={(() => {
+                          const nameFromCT = teamNames?.team1 || teams.find(t => t.team === 'CT')?.teamName || 'Time CT';
+                          const nameFromT = teamNames?.team2 || teams.find(t => t.team === 'T')?.teamName || 'Time T';
+                          const ctTeam = teams.find(t => t.team === 'CT');
+                          const tTeam = teams.find(t => t.team === 'T');
+                          
+                          // Calcular scores finais para verificar qual nome usar
+                          let teamCTScore = 0;
+                          let teamTScore = 0;
+                          for (const r of detailedRounds) {
+                            if (r.round <= 12) {
+                              if (r.winner === 'CT') teamCTScore++;
+                              else teamTScore++;
+                            } else {
+                              if (r.winner === 'CT') teamTScore++;
+                              else teamCTScore++;
+                            }
+                          }
+                          
+                          // Verificar qual nome corresponde ao time que começou em T
+                          if (Math.abs(teamTScore - (tTeam?.score || 0)) > Math.abs(teamTScore - (ctTeam?.score || 0))) {
+                            return nameFromCT;
+                          }
+                          return nameFromT;
+                        })()}
+                        stroke="#F97316" 
+                        strokeWidth={2} 
+                        dot={{ fill: '#F97316', r: 4 }} 
+                        connectNulls={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Gráfico de Pizza - Distribuição de Kills */}
+                <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-6">
+                  <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                    <Target className="w-5 h-5 text-purple-400" />
+                    Distribuição de Kills por Jogador
+                  </h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={players.slice(0, 10).map(p => ({
+                          name: p.name.length > 15 ? `${p.name.substring(0, 12)}...` : p.name,
+                          value: p.kills,
+                        }))}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }: { name: string; percent: number }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {players.slice(0, 10).map((entry, index) => {
+                          const colors = ['#3B82F6', '#F97316', '#10B981', '#EF4444', '#8B5CF6', '#F59E0B', '#06B6D4', '#EC4899', '#84CC16', '#6366F1'];
+                          return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                        })}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+
               <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
                 <h3 className="text-2xl font-bold text-white mb-6">Rounds Detalhados</h3>
                 <div className="space-y-4">
@@ -2757,10 +3547,12 @@ const CS2ProAnalyzerApp = () => {
                 </div>
               </div>
             </div>
+            </div>
           )}
 
           {/* Tab: Heatmap */}
           {selectedTab === 'heatmap' && (
+            <div className="animate-fade-in">
             <div className="space-y-8">
               {/* Informações do Mapa */}
               <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
@@ -2773,20 +3565,29 @@ const CS2ProAnalyzerApp = () => {
                 </div>
               </div>
 
-              {/* Heatmap 2D Interativo */}
+              {/* Heatmap 2D Interativo - Lazy Loading */}
               {(analysis?.killHeatmap || analysis?.deathHeatmap) && (
                 <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
                   <h3 className="text-2xl font-bold text-white mb-6">🗺️ Radar 2D com Heatmap</h3>
                   <p className="text-gray-400 mb-4 text-sm">
                     Visualização 2D do mapa com pontos de calor mostrando eliminações (verde) e mortes (vermelho).
                   </p>
-                  <Heatmap2DViewer 
-                    mapName={analysis?.map || 'unknown'}
-                    killHeatmap={analysis?.killHeatmap || []}
-                    deathHeatmap={analysis?.deathHeatmap || []}
-                    playerSteamID={selectedPlayerFilter !== 'all' ? parseInt(selectedPlayerFilter) : null}
-                    killEvents={analysis?.killEventsWithPositions || []}
-                  />
+                  <Suspense fallback={
+                    <div className="flex items-center justify-center py-20">
+                      <div className="text-center">
+                        <Loader2 className="w-12 h-12 text-orange-500 animate-spin mx-auto mb-4" />
+                        <p className="text-gray-400">Carregando heatmap...</p>
+                      </div>
+                    </div>
+                  }>
+                    <Heatmap2DViewer 
+                      mapName={analysis?.map || 'unknown'}
+                      killHeatmap={analysis?.killHeatmap || []}
+                      deathHeatmap={analysis?.deathHeatmap || []}
+                      playerSteamID={selectedPlayerFilter !== 'all' ? parseInt(selectedPlayerFilter) : null}
+                      killEvents={analysis?.killEventsWithPositions || []}
+                    />
+                  </Suspense>
                 </div>
               )}
 
@@ -2827,12 +3628,14 @@ const CS2ProAnalyzerApp = () => {
               )}
 
             </div>
+            </div>
           )}
 
 
 
           {/* Tab: Chat RUSH */}
           {selectedTab === 'chat' && (
+            <div className="animate-fade-in">
             <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-6">
               <div className="flex items-center gap-3 mb-6">
                 <Sparkles className="w-8 h-8 text-orange-400" />
@@ -2898,8 +3701,10 @@ const CS2ProAnalyzerApp = () => {
                 </button>
               </div>
             </div>
+            </div>
           )}
 
+          </div>
           {/* Action Buttons */}
           <div className="mt-12 grid grid-cols-2 gap-6">
             <button 

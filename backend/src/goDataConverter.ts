@@ -1568,16 +1568,25 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   // Criar lista de eventos de kill com posições para filtro no frontend
   const killEventsWithPositions = last20Events
     .filter(e => e.type === 'kill' && e.data)
-    .map(event => ({
-      round: event.round,
-      time: event.time,
-      killerSteamID: event.data?.killer?.steamID || 0,
-      killerName: event.data?.killer?.name || '',
-      killerPosition: event.data?.killer?.position || null,
-      victimSteamID: event.data?.victim?.steamID || 0,
-      victimName: event.data?.victim?.name || '',
-      victimPosition: event.data?.victim?.position || null,
-    }));
+    .map(event => {
+      const killerSteamID = event.data?.killer?.steamID || 0;
+      const victimSteamID = event.data?.victim?.steamID || 0;
+      const killerTeam = event.data?.killer?.team || playersBySteamID.get(killerSteamID)?.team || 'CT';
+      const victimTeam = event.data?.victim?.team || playersBySteamID.get(victimSteamID)?.team || 'CT';
+      
+      return {
+        round: event.round,
+        time: event.time,
+        killerSteamID: killerSteamID,
+        killerName: event.data?.killer?.name || '',
+        killerTeam: killerTeam,
+        killerPosition: event.data?.killer?.position || null,
+        victimSteamID: victimSteamID,
+        victimName: event.data?.victim?.name || '',
+        victimTeam: victimTeam,
+        victimPosition: event.data?.victim?.position || null,
+      };
+    });
 
   // Round highlights melhorados (todos os rounds oficiais)
   const roundHighlights = detailedRounds
