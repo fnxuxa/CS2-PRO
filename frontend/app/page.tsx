@@ -938,6 +938,50 @@ const CS2ProAnalyzerApp = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Validação: Verificar se o arquivo é .dem
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.dem')) {
+      const errorMessage = '❌ Arquivo inválido! Por favor, selecione um arquivo .dem válido.';
+      setJobError(errorMessage);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: errorMessage },
+      ]);
+      e.target.value = '';
+      return;
+    }
+
+    // Validação: Verificar tamanho máximo (450MB)
+    const maxSizeBytes = 450 * 1024 * 1024; // 450MB em bytes
+    const fileSizeBytes = file.size;
+    
+    if (fileSizeBytes > maxSizeBytes) {
+      const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
+      const errorMessage = `❌ Arquivo muito grande! O tamanho máximo permitido é 450MB. Seu arquivo tem ${fileSizeMB}MB.`;
+      setJobError(errorMessage);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: errorMessage },
+      ]);
+      e.target.value = '';
+      return;
+    }
+
+    // Validação: Verificar se o arquivo não está vazio
+    if (fileSizeBytes === 0) {
+      const errorMessage = '❌ Arquivo vazio! Por favor, selecione um arquivo válido.';
+      setJobError(errorMessage);
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: errorMessage },
+      ]);
+      e.target.value = '';
+      return;
+    }
+
+    // Limpar erros anteriores
+    setJobError(null);
+
     const formData = new FormData();
     formData.append('demo', file);
 
@@ -1513,7 +1557,8 @@ const CS2ProAnalyzerApp = () => {
                     <Upload className="w-16 h-16 text-black" />
                   </div>
                   <h2 className="text-4xl font-black text-white mb-4">Upload Sua Demo</h2>
-                  <p className="text-xl text-gray-400 mb-8">Arraste ou clique para selecionar arquivo .dem</p>
+                  <p className="text-xl text-gray-400 mb-4">Arraste ou clique para selecionar arquivo .dem</p>
+                  <p className="text-sm text-gray-500 mb-8">Tamanho máximo: 450MB</p>
                   
                   <label className="cursor-pointer">
                     <input 
@@ -1924,6 +1969,13 @@ const CS2ProAnalyzerApp = () => {
       if (aggressiveRate >= 50) playstyle = 'Agressivo';
       else if (aggressiveRate <= 25) playstyle = 'Defensivo';
 
+      // Obter armas mais usadas do jogador
+      const playerWeaponStats = player.weaponStats || [];
+      const topWeapons = playerWeaponStats
+        .filter(ws => ws.kills > 0) // Apenas armas com kills
+        .sort((a, b) => b.kills - a.kills) // Ordenar por kills (maior primeiro)
+        .slice(0, 5); // Top 5 armas
+
       return {
         preferredSite,
         siteAPercent: siteAPercent.toFixed(1),
@@ -1934,6 +1986,7 @@ const CS2ProAnalyzerApp = () => {
         totalKills,
         playstyle,
         killsInOwnTerritory,
+        topWeapons, // Adicionar armas mais usadas
       };
     };
 
@@ -2641,6 +2694,37 @@ const CS2ProAnalyzerApp = () => {
                                             </div>
                                           </div>
                                         </div>
+                                        
+                                        {/* Armas Mais Usadas */}
+                                        {insights.topWeapons && insights.topWeapons.length > 0 && (
+                                          <div className="border-t border-gray-700 pt-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                              <span className="text-sm text-gray-400">Armas Mais Usadas</span>
+                                              <Crosshair className="w-4 h-4 text-orange-400" />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              {insights.topWeapons.map((weapon, idx) => {
+                                                const killPercentage = insights.totalKills > 0 
+                                                  ? ((weapon.kills / insights.totalKills) * 100).toFixed(1)
+                                                  : '0';
+                                                return (
+                                                  <div key={idx} className="flex items-center justify-between text-xs">
+                                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                      <span className="text-gray-500 truncate">{weapon.weapon}</span>
+                                                      {weapon.headshots > 0 && (
+                                                        <span className="text-yellow-400 text-[10px]">HS</span>
+                                                      )}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="text-white font-semibold">{weapon.kills}</span>
+                                                      <span className="text-gray-600 text-[10px]">({killPercentage}%)</span>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
                                         
                                         {/* Estatísticas rápidas */}
                                         <div className="border-t border-gray-700 pt-3">

@@ -35,7 +35,14 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 1024 * 1024 * 1024, // 1GB
+    fileSize: 450 * 1024 * 1024, // 450MB (limite máximo para arquivos .dem)
+  },
+  fileFilter: (_req, file, cb) => {
+    // Validar se o arquivo é .dem
+    if (!file.originalname.toLowerCase().endsWith('.dem')) {
+      return cb(new Error('Apenas arquivos .dem são permitidos.'));
+    }
+    cb(null, true);
   },
 });
 
@@ -48,6 +55,23 @@ app.get('/health', (_req, res) => {
 app.post('/upload', upload.single('demo'), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: 'Nenhum arquivo enviado. Certifique-se de usar o campo "demo".' });
+  }
+
+  // Validação adicional: verificar tamanho (450MB)
+  const maxSizeBytes = 450 * 1024 * 1024; // 450MB
+  if (req.file.size > maxSizeBytes) {
+    const fileSizeMB = (req.file.size / 1024 / 1024).toFixed(2);
+    return res.status(400).json({ 
+      error: `Arquivo muito grande! O tamanho máximo permitido é 450MB. Seu arquivo tem ${fileSizeMB}MB.` 
+    });
+  }
+
+  // Validação adicional: verificar extensão
+  const fileName = req.file.originalname.toLowerCase();
+  if (!fileName.endsWith('.dem')) {
+    return res.status(400).json({ 
+      error: 'Apenas arquivos .dem são permitidos.' 
+    });
   }
 
   const uploadId = uuid();
@@ -150,8 +174,23 @@ app.post('/chat/rush', (req: Request, res: Response) => {
   res.json({ reply });
 });
 
+// Handler de erros do multer (tamanho de arquivo, tipo, etc.)
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
+  
+  // Erros do multer (tamanho de arquivo excedido, tipo inválido, etc.)
+  if (err.message.includes('File too large') || err.message.includes('LIMIT_FILE_SIZE')) {
+    return res.status(400).json({ 
+      error: 'Arquivo muito grande! O tamanho máximo permitido é 450MB.' 
+    });
+  }
+  
+  if (err.message.includes('.dem') || err.message.includes('permitidos')) {
+    return res.status(400).json({ 
+      error: err.message || 'Apenas arquivos .dem são permitidos.' 
+    });
+  }
+  
   res.status(500).json({ error: 'Erro interno inesperado.', details: err.message });
 });
 
