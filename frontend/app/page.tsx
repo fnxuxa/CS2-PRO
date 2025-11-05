@@ -2267,7 +2267,7 @@ const CS2ProAnalyzerApp = () => {
                 <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
                   <h3 className="text-2xl font-bold text-white mb-6">🕹️ Estatísticas por Arma</h3>
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredWeaponStats.slice(0, 9).map((weapon: WeaponStats, idx: number) => (
+                    {filteredWeaponStats.map((weapon: WeaponStats, idx: number) => (
                       <div key={idx} className="bg-black/40 rounded-xl p-4 border border-gray-700">
                         <h4 className="text-white font-bold mb-2">{weapon.weapon}</h4>
                         <div className="space-y-1 text-sm">
@@ -2290,7 +2290,7 @@ const CS2ProAnalyzerApp = () => {
                   <p className="text-gray-400 mb-4 text-sm">Primeira kill do round - quando o jogador consegue a primeira eliminação do round</p>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                     {filteredPlayers.map(player => {
-                      const firstKills = (player.entryFragWins || 0);
+                      const firstKills = (player.entryFrags || 0); // Total de first kills (não apenas wins)
                       return (
                         <div key={player.steamID} className="bg-black/40 rounded-xl p-4 border border-gray-700">
                           <p className="text-white font-semibold mb-2 text-sm" title={player.name}>
@@ -2540,11 +2540,11 @@ const CS2ProAnalyzerApp = () => {
                         <div key={idx} className="bg-black/40 rounded-xl p-4 border border-gray-700">
                           <h4 className="text-white font-bold mb-2">{player.name}</h4>
                           <p className={`text-lg font-bold mb-3 ${
-                            role.primaryRole === 'Entry Fragger' ? 'text-red-400' :
+                            role.primaryRole === 'Entry' || role.primaryRole === 'Entry Fragger' ? 'text-red-400' :
                             role.primaryRole === 'Support' ? 'text-blue-400' :
-                            role.primaryRole === 'Lurker' ? 'text-purple-400' :
+                            role.primaryRole === 'Lurker' ? 'text-indigo-400' :
                             role.primaryRole === 'AWPer' ? 'text-yellow-400' :
-                            role.primaryRole === 'Rifler' ? 'text-orange-400' :
+                            role.primaryRole === 'Rifler' ? 'text-purple-400' :
                             role.primaryRole === 'Anchor' ? 'text-cyan-400' :
                             'text-green-400'
                           }`}>
@@ -2552,7 +2552,7 @@ const CS2ProAnalyzerApp = () => {
                           </p>
                           <div className="space-y-1 text-xs">
                             <div className="flex justify-between">
-                              <span className="text-gray-400">Entry:</span>
+                              <span className="text-red-400">Entry:</span>
                               <span className="text-white">{role.roles.entry.toFixed(0)}</span>
                             </div>
                             <div className="flex justify-between">

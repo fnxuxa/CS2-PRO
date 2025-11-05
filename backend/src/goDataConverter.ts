@@ -166,6 +166,9 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   const last20Events = officialEvents; // Mantém nome para compatibilidade
   const last20Rounds = officialRounds; // Todos os rounds oficiais
   
+  // Calcular round offset para normalização (GC: round 5 vira 1, MM: já começa em 1)
+  const roundOffset = isGC ? firstOfficialRound - 1 : 0;
+  
   // Separar jogadores por time
   const ctPlayers = players.filter(p => p.team === 'CT');
   const tPlayers = players.filter(p => p.team === 'T');
@@ -380,14 +383,24 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
 
   // ==================== CALCULAR ESTATÍSTICAS AVANÇADAS ====================
   
-  // 1. TRADES: Aliado mata quem matou seu aliado dentro de 8 segundos
+  // Função auxiliar para calcular distância 3D entre duas posições
+  const calculateDistance = (pos1: { x: number; y: number; z: number } | null | undefined, pos2: { x: number; y: number; z: number } | null | undefined): number => {
+    if (!pos1 || !pos2) return Infinity;
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    const dz = pos1.z - pos2.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  };
+  
+  // 1. TRADES: Aliado mata quem matou seu aliado dentro de 5 segundos
+  // Lógica correta: Jogador A e B são do mesmo time e estão próximos, Jogador C mata B, A mata C dentro de 5s = trade sucesso
   const tradeKills: TradeKill[] = [];
   const playerSuccessfulTradesMap = new Map<number, number>();
   const playerFailedTradesMap = new Map<number, number>();
   const playerTradeKillsMap = new Map<number, TradeKill[]>();
   
   // Processar kills em ordem cronológica por round
-  const killsByRound = new Map<number, Array<{ event: GoEvent; killerSteamID: number; victimSteamID: number; killerTeam: string; victimTeam: string; time: number }>>();
+  const killsByRound = new Map<number, Array<{ event: GoEvent; killerSteamID: number; victimSteamID: number; killerTeam: string; victimTeam: string; time: number; victimPosition?: { x: number; y: number; z: number }; killerPosition?: { x: number; y: number; z: number } }>>();
   
   officialEvents.forEach(event => {
     if (event.type === 'kill' && event.data?.killer && event.data?.victim) {
@@ -400,6 +413,20 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
         if (!killsByRound.has(event.round)) {
           killsByRound.set(event.round, []);
         }
+        
+        const victimPos = event.data.victim.position;
+        const killerPos = event.data.killer.position;
+        
+        // Normalizar posição (pode vir com X/Y/Z ou x/y/z do JSON)
+        const normalizePosition = (pos: any): { x: number; y: number; z: number } | undefined => {
+          if (!pos) return undefined;
+          return {
+            x: pos.x || pos.X || 0,
+            y: pos.y || pos.Y || 0,
+            z: pos.z || pos.Z || 0,
+          };
+        };
+        
         killsByRound.get(event.round)!.push({
           event,
           killerSteamID,
@@ -407,21 +434,68 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
           killerTeam,
           victimTeam,
           time: event.time,
+          victimPosition: normalizePosition(victimPos),
+          killerPosition: normalizePosition(killerPos),
         });
       }
     }
   });
   
-  // Para cada kill, verificar se houve trade dentro de 8 segundos
+  // Criar mapa de posições dos jogadores por round/tempo para encontrar aliados próximos
+  const playerPositionsByRound = new Map<number, Array<{ steamID: number; time: number; position: { x: number; y: number; z: number } }>>();
+  officialEvents.forEach(event => {
+    if (event.type === 'kill' && event.data) {
+      const round = event.round;
+      if (!playerPositionsByRound.has(round)) {
+        playerPositionsByRound.set(round, []);
+      }
+      
+      // Normalizar posição (pode vir com X/Y/Z ou x/y/z do JSON)
+      const normalizePosition = (pos: any): { x: number; y: number; z: number } | undefined => {
+        if (!pos) return undefined;
+        return {
+          x: pos.x || pos.X || 0,
+          y: pos.y || pos.Y || 0,
+          z: pos.z || pos.Z || 0,
+        };
+      };
+      
+      // Adicionar posição do killer
+      if (event.data.killer?.steamID && event.data.killer?.position) {
+        const pos = normalizePosition(event.data.killer.position);
+        if (pos) {
+          playerPositionsByRound.get(round)!.push({
+            steamID: event.data.killer.steamID,
+            time: event.time,
+            position: pos,
+          });
+        }
+      }
+      
+      // Adicionar posição do victim
+      if (event.data.victim?.steamID && event.data.victim?.position) {
+        const pos = normalizePosition(event.data.victim.position);
+        if (pos) {
+          playerPositionsByRound.get(round)!.push({
+            steamID: event.data.victim.steamID,
+            time: event.time,
+            position: pos,
+          });
+        }
+      }
+    }
+  });
+  
+  // Para cada kill, verificar se houve trade dentro de 5 segundos
   killsByRound.forEach((kills, round) => {
     kills.forEach((kill, index) => {
-      const { victimSteamID, killerSteamID, killerTeam, time } = kill;
+      const { victimSteamID, killerSteamID, killerTeam, time, victimPosition } = kill;
       
-      // Encontrar aliados do victim que estavam vivos
+      // Encontrar aliados do victim que estavam vivos e próximos
       const victimTeam = playersBySteamID.get(victimSteamID)?.team || 'CT';
       const victimAllies = players.filter(p => p.team === victimTeam && p.steamID !== victimSteamID);
       
-      // Procurar kills dos aliados nos próximos 8 segundos (ou até o final do round)
+      // Procurar kills dos aliados nos próximos 5 segundos (ou até o final do round)
       let tradeFound = false;
       let tradeKill: any = null;
       const failedTrades: Array<{ player: string; playerSteamID: number; distance: number }> = [];
@@ -430,15 +504,18 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
       const subsequentKills = kills.slice(index + 1);
       for (const nextKill of subsequentKills) {
         const timeDiff = nextKill.time - time;
-        if (timeDiff > 8) break; // Mais de 8 segundos
+        if (timeDiff > 5) break; // Mais de 5 segundos (alterado de 8 para 5)
         
         // Se um aliado matou o killer, é trade bem-sucedida
         if (nextKill.victimSteamID === killerSteamID && nextKill.killerSteamID !== killerSteamID) {
           const trader = playersBySteamID.get(nextKill.killerSteamID);
           if (trader && trader.team === victimTeam) {
             tradeFound = true;
+            // Calcular round normalizado para exibição (roundOffset já declarado acima)
+            const displayRoundForTrade = round - roundOffset;
+            
             tradeKill = {
-              round,
+              round: displayRoundForTrade, // Usar round normalizado (começar em 1)
               time: nextKill.time,
               victimSteamID,
               victimName: playersBySteamID.get(victimSteamID)?.name || 'Unknown',
@@ -465,31 +542,60 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
         }
       }
       
-      // Se não encontrou trade, verificar aliados que estavam presentes mas não mataram
-      if (!tradeFound) {
-        // Procurar aliados que estavam vivos e próximos (simplificado)
+      // Se não encontrou trade, verificar aliados que estavam PRÓXIMOS mas não mataram
+      if (!tradeFound && victimPosition) {
+        // Buscar posições dos aliados no momento da kill (ou próximo)
+        const roundPositions = playerPositionsByRound.get(round) || [];
+        const MAX_DISTANCE_FOR_TRADE = 800; // Distância máxima para considerar trade possível (em unidades Source)
+        
         victimAllies.forEach(ally => {
-          // Verificar se o aliado estava vivo no momento da kill
-          // Se não matou o killer nos próximos 8 segundos, é trade falhada
+          // Verificar se o aliado estava vivo no momento da kill (não foi morto antes)
+          const allyKilledBefore = kills.slice(0, index).some(k => k.victimSteamID === ally.steamID && k.time <= time);
+          if (allyKilledBefore) {
+            return; // Aliado já estava morto, não conta como failed trade
+          }
+          
+          // Verificar se o aliado matou o killer nos próximos 5 segundos
           const allyKillsAfter = kills.slice(index + 1).filter(k => 
-            k.killerSteamID === ally.steamID && (k.time - time) <= 8
+            k.killerSteamID === ally.steamID && k.victimSteamID === killerSteamID && (k.time - time) <= 5
           );
           
           if (allyKillsAfter.length === 0) {
-            // Aliado estava presente mas não fez trade (estimativa de distância)
-            failedTrades.push({
-              player: ally.name,
-              playerSteamID: ally.steamID,
-              distance: 500, // Estimativa
-            });
+            // Aliado não fez trade, mas precisa verificar se estava próximo
+            // Buscar a posição mais próxima do aliado antes ou no momento da kill
+            const allyPositionsBeforeKill = roundPositions.filter(p => 
+              p.steamID === ally.steamID && p.time <= time
+            );
             
-            playerFailedTradesMap.set(ally.steamID, (playerFailedTradesMap.get(ally.steamID) || 0) + 1);
+            if (allyPositionsBeforeKill.length > 0) {
+              // Pegar a posição mais próxima do momento da kill
+              const allyPos = allyPositionsBeforeKill.reduce((closest, current) => 
+                Math.abs(current.time - time) < Math.abs(closest.time - time) ? current : closest
+              );
+              
+              const distance = calculateDistance(victimPosition, allyPos.position);
+              
+              // Só marcar como failed trade se o aliado estava próximo (dentro de 800 unidades)
+              if (distance <= MAX_DISTANCE_FOR_TRADE) {
+                failedTrades.push({
+                  player: ally.name,
+                  playerSteamID: ally.steamID,
+                  distance: Math.round(distance),
+                });
+                
+                playerFailedTradesMap.set(ally.steamID, (playerFailedTradesMap.get(ally.steamID) || 0) + 1);
+              }
+            }
           }
         });
         
+        // Só criar tradeKill failed se houver aliados próximos que falharam
         if (failedTrades.length > 0) {
+          // Calcular round normalizado para exibição (roundOffset já declarado acima)
+          const displayRoundForTrade = round - roundOffset;
+          
           tradeKill = {
-            round,
+            round: displayRoundForTrade, // Usar round normalizado (começar em 1)
             time,
             victimSteamID,
             victimName: playersBySteamID.get(victimSteamID)?.name || 'Unknown',
@@ -510,26 +616,59 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   });
   
   // 2. FIRST KILL / ENTRY FRAGS: Primeira kill do round (só 1 por round)
+  // IMPORTANTE: A primeira kill do round é literalmente a primeira kill que acontece quando o round inicia
+  // Precisamos garantir que pegamos a primeira kill cronológica de cada round oficial
   const entryFrags: EntryFrag[] = [];
   const roundFirstKills = new Map<number, { killerSteamID: number; victimSteamID: number; time: number }>();
   const playerEntryFragsMap = new Map<number, number>();
   const playerEntryFragWinsMap = new Map<number, number>();
   const playerEntryFragLossesMap = new Map<number, number>();
   
-  killsByRound.forEach((kills, round) => {
-    if (kills.length === 0) return;
+  // Para cada round oficial, encontrar o tempo de início do round (se disponível)
+  const roundStartTimes = new Map<number, number>();
+  officialEvents.forEach(event => {
+    if (event.type === 'round_start' && officialRounds.has(event.round)) {
+      roundStartTimes.set(event.round, event.time);
+    }
+  });
+  
+  // Processar cada round oficial para encontrar a primeira kill
+  officialRounds.forEach(round => {
+    // Pegar TODAS as kills deste round (já filtradas por rounds oficiais)
+    const roundKills = killsByRound.get(round) || [];
     
-    // Primeira kill do round (ordenar por tempo)
-    const sortedKills = [...kills].sort((a, b) => a.time - b.time);
+    if (roundKills.length === 0) {
+      // Round sem kills (raro, mas pode acontecer)
+      return;
+    }
+    
+    // Ordenar kills por tempo cronológico (a primeira é a first kill)
+    const sortedKills = [...roundKills].sort((a, b) => {
+      // Ordenar por tempo absoluto (cronológico)
+      if (a.time !== b.time) {
+        return a.time - b.time;
+      }
+      // Se tem mesmo tempo, ordenar por tick
+      return a.event.tick - b.event.tick;
+    });
+    
+    // A primeira kill do round é a first kill
     const firstKill = sortedKills[0];
     
     if (firstKill) {
+      // Verificar se já não existe uma first kill para este round (garantia de segurança)
+      if (roundFirstKills.has(round)) {
+        console.warn(`[WARNING] Round ${round} já tem uma first kill registrada. Ignorando duplicata.`);
+        return;
+      }
+      
       roundFirstKills.set(round, {
         killerSteamID: firstKill.killerSteamID,
         victimSteamID: firstKill.victimSteamID,
         time: firstKill.time,
       });
       
+      // Contar first kill para o jogador
       playerEntryFragsMap.set(firstKill.killerSteamID, (playerEntryFragsMap.get(firstKill.killerSteamID) || 0) + 1);
       
       // Verificar se o time do killer ganhou o round
@@ -543,8 +682,11 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
         playerEntryFragLossesMap.set(firstKill.killerSteamID, (playerEntryFragLossesMap.get(firstKill.killerSteamID) || 0) + 1);
       }
       
+      // Calcular round normalizado para exibição (roundOffset já declarado acima)
+      const displayRoundForEntry = round - roundOffset;
+      
       entryFrags.push({
-        round,
+        round: displayRoundForEntry, // Usar round normalizado (começar em 1)
         time: firstKill.time,
         playerSteamID: firstKill.killerSteamID,
         playerName: playersBySteamID.get(firstKill.killerSteamID)?.name || 'Unknown',
@@ -552,8 +694,18 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
         killedName: playersBySteamID.get(firstKill.victimSteamID)?.name || 'Unknown',
         wonRound: roundWinner === killerTeam,
       });
+      
+      console.log(`[FIRST KILL] Round ${round}: ${playersBySteamID.get(firstKill.killerSteamID)?.name || 'Unknown'} matou ${playersBySteamID.get(firstKill.victimSteamID)?.name || 'Unknown'} no tempo ${firstKill.time.toFixed(2)}s`);
     }
   });
+  
+  // Log de resumo de first kills por jogador
+  console.log(`[FIRST KILL SUMMARY] Total de first kills por jogador:`);
+  playerEntryFragsMap.forEach((count, steamID) => {
+    const playerName = playersBySteamID.get(steamID)?.name || 'Unknown';
+    console.log(`  - ${playerName}: ${count} first kills`);
+  });
+  console.log(`[FIRST KILL SUMMARY] Total de rounds processados: ${officialRounds.size}, Total de first kills registradas: ${entryFrags.length}`);
   
   // 3. CLUTCHES: Situações 1vX
   const clutchSituations: ClutchSituation[] = [];
@@ -731,38 +883,79 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   const criticalErrors: CriticalError[] = [];
   const highlights: Highlight[] = [];
   
-  // Highlights: Multi-kills e clutches
+  // Highlights: Multi-kills e clutches - APENAS em rounds oficiais
+  // IMPORTANTE: 3K, 4K, 5K só contam se o jogador fez TODAS as kills NO MESMO ROUND
+  // roundOffset já foi declarado acima, reutilizar
   killsByRound.forEach((kills, round) => {
+    // Verificar se é round oficial
+    if (!officialRounds.has(round)) {
+      return; // Ignorar rounds não oficiais
+    }
+    
+    // Calcular round normalizado para exibição (começar em 1)
+    const displayRound = round - roundOffset;
+    
+    // Contar kills de cada jogador NO MESMO ROUND (não acumular entre rounds)
+    // IMPORTANTE: Verificar que são kills válidas (não team-kills, não suicídios)
     const playerKillCount = new Map<number, number>();
+    const playerKillsDetails = new Map<number, Array<{ victim: string; time: number }>>();
+    
     kills.forEach(kill => {
-      playerKillCount.set(kill.killerSteamID, (playerKillCount.get(kill.killerSteamID) || 0) + 1);
+      // Verificar se é kill válida (killer diferente de victim, times diferentes)
+      if (kill.killerSteamID && kill.victimSteamID && 
+          kill.killerSteamID !== kill.victimSteamID &&
+          kill.killerTeam !== kill.victimTeam) {
+        // Contar apenas kills válidas feitas por este jogador neste round
+        const currentCount = playerKillCount.get(kill.killerSteamID) || 0;
+        playerKillCount.set(kill.killerSteamID, currentCount + 1);
+        
+        // Guardar detalhes da kill para debug
+        if (!playerKillsDetails.has(kill.killerSteamID)) {
+          playerKillsDetails.set(kill.killerSteamID, []);
+        }
+        const victimName = playersBySteamID.get(kill.victimSteamID)?.name || 'Unknown';
+        playerKillsDetails.get(kill.killerSteamID)!.push({
+          victim: victimName,
+          time: kill.time,
+        });
+      }
     });
     
+    // Validar e criar highlights apenas para kills válidas no mesmo round
     playerKillCount.forEach((killCount, playerSteamID) => {
       const playerName = playersBySteamID.get(playerSteamID)?.name || 'Unknown';
+      
+      // VALIDAÇÃO CRÍTICA: Só criar highlight se realmente fez essa quantidade EXATA de kills válidas NO MESMO ROUND
+      // killCount já está contando apenas kills deste round específico (killsByRound é separado por round)
       if (killCount >= 5) {
+        const killsDetails = playerKillsDetails.get(playerSteamID) || [];
+        console.log(`[HIGHLIGHT] Round ${displayRound} (original: ${round}): ${playerName} fez ACE (${killCount} kills válidas no mesmo round):`, killsDetails.map(k => `${k.victim}@${k.time.toFixed(2)}s`).join(', '));
         highlights.push({
-          round,
+          round: displayRound, // Usar round normalizado
           player: playerName,
           playerSteamID,
           type: 'ace',
-          description: `${playerName} fez ACE (5 kills) no round ${round}`,
+          description: `${playerName} fez ACE (5 kills) no round ${displayRound}`,
         });
       } else if (killCount === 4) {
+        const killsDetails = playerKillsDetails.get(playerSteamID) || [];
+        console.log(`[HIGHLIGHT] Round ${displayRound} (original: ${round}): ${playerName} fez 4K (${killCount} kills válidas no mesmo round):`, killsDetails.map(k => `${k.victim}@${k.time.toFixed(2)}s`).join(', '));
         highlights.push({
-          round,
+          round: displayRound, // Usar round normalizado
           player: playerName,
           playerSteamID,
           type: '4k',
-          description: `${playerName} fez 4K no round ${round}`,
+          description: `${playerName} fez 4K no round ${displayRound}`,
         });
       } else if (killCount === 3) {
+        const killsDetails = playerKillsDetails.get(playerSteamID) || [];
+        console.log(`[HIGHLIGHT] Round ${displayRound} (original: ${round}): ${playerName} fez 3K (${killCount} kills válidas no mesmo round):`, killsDetails.map(k => `${k.victim}@${k.time.toFixed(2)}s`).join(', '));
         highlights.push({
-          round,
+          round: displayRound, // Usar round normalizado
           player: playerName,
           playerSteamID,
           type: '3k',
-          description: `${playerName} fez 3K no round ${round}`,
+          description: `${playerName} fez 3K no round ${displayRound}`,
         });
       }
     });
@@ -771,11 +964,11 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
     const roundClutches = clutchSituations.filter(c => c.round === round && c.won);
     roundClutches.forEach(clutch => {
       highlights.push({
-        round,
+        round: displayRound, // Usar round normalizado
         player: clutch.playerName,
         playerSteamID: clutch.playerSteamID,
         type: `clutch_${clutch.situation}` as any,
-        description: `${clutch.playerName} ganhou ${clutch.situation} no round ${round}`,
+        description: `${clutch.playerName} ganhou ${clutch.situation} no round ${displayRound}`,
       });
     });
   });
@@ -795,41 +988,131 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
     };
   });
   
-  // Player Roles: Classificação simplificada baseada em estatísticas
-  const playerRoles: PlayerRole[] = players.map(player => {
+  // Player Roles: Classificação seguindo ordem específica
+  // Ordem: Rifler > Entry-fragger > Awper > Anchor > Suporte > IGL (2 por partida, os que sobraram)
+  const playerRoles: PlayerRole[] = [];
+  const assignedRoles = new Map<number, string>();
+  
+  // Separar jogadores por time (já declarado acima, reutilizar)
+  // ctPlayers e tPlayers já foram declarados anteriormente
+  
+  // Função para atribuir roles seguindo a ordem especificada
+  const assignRolesToTeam = (teamPlayers: GoPlayer[], teamName: string) => {
+    // 1. Rifler: Jogador que mais matou de cada lado
+    const sortedByKills = [...teamPlayers].sort((a, b) => {
+      const killsA = playerKillsMap.get(a.steamID) || 0;
+      const killsB = playerKillsMap.get(b.steamID) || 0;
+      return killsB - killsA;
+    });
+    
+    if (sortedByKills.length > 0 && !assignedRoles.has(sortedByKills[0].steamID)) {
+      assignedRoles.set(sortedByKills[0].steamID, 'rifler');
+    }
+    
+    // 2. Entry-fragger: Segundo jogador que mais matou de cada lado
+    if (sortedByKills.length > 1 && !assignedRoles.has(sortedByKills[1].steamID)) {
+      assignedRoles.set(sortedByKills[1].steamID, 'entry');
+    }
+    
+    // 3. Awper: Jogador com 6+ kills de AWP
+    for (const player of teamPlayers) {
+      if (assignedRoles.has(player.steamID)) continue;
+      
+      const weaponStats = playerWeaponStatsMap.get(player.steamID);
+      if (weaponStats) {
+        const awpKills = weaponStats.get('AWP')?.kills || 0;
+        if (awpKills >= 6) {
+          assignedRoles.set(player.steamID, 'awper');
+          break; // Só um Awper por time
+        }
+      }
+    }
+    
+    // 4. Anchor: Jogador que geralmente joga no bomb B (heurística: mais kills em bomb_planted events em site B)
+    // Por enquanto, vamos usar uma heurística simples: jogador com mais assists (mais defensivo)
+    // TODO: Implementar detecção real de posições de bomb B
+    const sortedByAssists = [...teamPlayers]
+      .filter(p => !assignedRoles.has(p.steamID))
+      .sort((a, b) => {
+        const assistsA = playerAssistsMap.get(a.steamID) || 0;
+        const assistsB = playerAssistsMap.get(b.steamID) || 0;
+        return assistsB - assistsA;
+      });
+    
+    if (sortedByAssists.length > 0) {
+      // Pegar o primeiro que não tem role ainda
+      const anchorCandidate = sortedByAssists.find(p => !assignedRoles.has(p.steamID));
+      if (anchorCandidate) {
+        assignedRoles.set(anchorCandidate.steamID, 'anchor');
+      }
+    }
+    
+    // 5. Suporte: Jogador com muitas assistências (que não foi atribuído ainda)
+    const sortedByAssistsForSupport = [...teamPlayers]
+      .filter(p => !assignedRoles.has(p.steamID))
+      .sort((a, b) => {
+        const assistsA = playerAssistsMap.get(a.steamID) || 0;
+        const assistsB = playerAssistsMap.get(b.steamID) || 0;
+        return assistsB - assistsA;
+      });
+    
+    if (sortedByAssistsForSupport.length > 0) {
+      const supportCandidate = sortedByAssistsForSupport.find(p => !assignedRoles.has(p.steamID));
+      if (supportCandidate) {
+        assignedRoles.set(supportCandidate.steamID, 'support');
+      }
+    }
+    
+    // 6. IGL: Os que sobraram (1 de cada lado) - será atribuído no final
+  };
+  
+  // Atribuir roles para cada time
+  assignRolesToTeam(ctPlayers, 'CT');
+  assignRolesToTeam(tPlayers, 'T');
+  
+  // 6. IGL: Atribuir aos que sobraram (1 de cada lado)
+  const unassignedCT = ctPlayers.filter(p => !assignedRoles.has(p.steamID));
+  const unassignedT = tPlayers.filter(p => !assignedRoles.has(p.steamID));
+  
+  if (unassignedCT.length > 0) {
+    // Pegar o primeiro não atribuído do CT
+    assignedRoles.set(unassignedCT[0].steamID, 'igl');
+  }
+  
+  if (unassignedT.length > 0) {
+    // Pegar o primeiro não atribuído do T
+    assignedRoles.set(unassignedT[0].steamID, 'igl');
+  }
+  
+  // Criar array de PlayerRole com todos os jogadores
+  players.forEach(player => {
+    const role = assignedRoles.get(player.steamID) || 'rifler'; // Default para rifler se não atribuído
+    
+    // Calcular scores para cada role (para compatibilidade com frontend)
     const entryFrags = playerEntryFragsMap.get(player.steamID) || 0;
     const assists = playerAssistsMap.get(player.steamID) || 0;
     const tradesGiven = playerSuccessfulTradesMap.get(player.steamID) || 0;
     const clutches = playerClutchMap.get(player.steamID)?.length || 0;
+    const kills = playerKillsMap.get(player.steamID) || 0;
     
-    // Scores simplificados para cada role
-    const entryScore = entryFrags * 10;
-    const supportScore = assists * 5 + tradesGiven * 3;
-    const lurkerScore = clutches * 5;
-    const awperScore = 0; // TODO: Detectar uso de AWP
-    const riflerScore = (playerKillsMap.get(player.steamID) || 0) * 2;
-    const anchorScore = 0; // TODO: Detectar posições de anchor
-    const iglScore = 0; // TODO: Detectar IGL baseado em comandos
+    const weaponStats = playerWeaponStatsMap.get(player.steamID);
+    const awpKills = weaponStats?.get('AWP')?.kills || 0;
     
     const roles = {
-      entry: entryScore,
-      support: supportScore,
-      lurker: lurkerScore,
-      awper: awperScore,
-      rifler: riflerScore,
-      anchor: anchorScore,
-      igl: iglScore,
+      entry: entryFrags * 10,
+      support: assists * 5 + tradesGiven * 3,
+      lurker: clutches * 5,
+      awper: awpKills * 10,
+      rifler: kills * 2,
+      anchor: assists * 3,
+      igl: 0,
     };
     
-    const primaryRole = Object.entries(roles).reduce((max, [role, score]) => 
-      score > max[1] ? [role, score] : max, ['rifler', 0]
-    )[0];
-    
-    return {
+    playerRoles.push({
       playerSteamID: player.steamID,
-      primaryRole: primaryRole.charAt(0).toUpperCase() + primaryRole.slice(1),
+      primaryRole: role.charAt(0).toUpperCase() + role.slice(1),
       roles,
-    };
+    });
   });
   
   // ==================== FIM DAS ESTATÍSTICAS AVANÇADAS ====================
@@ -1034,6 +1317,7 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   const bestKDRatio = allPlayerStats.reduce((max, p) => (p.kdRatio || 0) > (max.kdRatio || 0) ? p : max, allPlayerStats[0] || allPlayerStats[0]);
 
   // Análise por zonas do mapa (usando kills de TODOS os rounds oficiais)
+  // roundOffset já foi declarado acima, reutilizar
   const zoneStats: Map<string, { kills: number; deaths: number; team: 'CT' | 'T' }[]> = new Map();
   
   last20Events.forEach(event => {
@@ -1154,7 +1438,7 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   // Normalizar numeração dos rounds para começar em 1 (apenas visual)
   // GC: round 5 vira round 1, round 6 vira round 2, etc.
   // MM: já começa em 1, então offset é 0
-  const roundOffset = isGC ? firstOfficialRound - 1 : 0;
+  // roundOffset já foi declarado acima, reutilizar
   
   const detailedRounds: DetailedRound[] = last20Events
     .filter(e => e.type === 'round_end')
