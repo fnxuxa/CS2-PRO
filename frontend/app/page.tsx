@@ -973,6 +973,8 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
   const [scoreCT, setScoreCT] = useState(0);
   const [scoreT, setScoreT] = useState(0);
   const [warmupRounds, setWarmupRounds] = useState(4);
+  const [killFeed, setKillFeed] = useState<Array<{id: number, killer: string, victim: string, time: number}>>([]);
+  const killFeedIdRef = React.useRef(0);
 
   // Obter transform do mapa (garantir acesso ao radarTransforms)
   // Definir localmente caso não esteja acessível do escopo do módulo
@@ -1065,9 +1067,9 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
       });
   }, [uploadId]);
   
-  // Atualizar placar dinamicamente conforme a reprodução avança
+  // Atualizar placar e kill feed dinamicamente conforme a reprodução avança
   useEffect(() => {
-    if (frames.length === 0 || currentFrameIndex === 0) return;
+    if (frames.length === 0) return;
     
     const currentFrame = frames[currentFrameIndex];
     if (!currentFrame) return;
@@ -1083,25 +1085,73 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
       if (!frame) continue;
       
       frame.events?.forEach((event: any) => {
+        // Processar round_end para placar
         if (event.type === 'round_end' && frame.round > warmupRounds && !processedRounds.has(frame.round)) {
           processedRounds.add(frame.round);
           
-          // Determinar vencedor baseado nos jogadores vivos
+          // Determinar vencedor baseado nos jogadores vivos no final do round
           const ctAlive = frame.players?.filter((p: any) => p.team === 'CT' && p.isAlive).length || 0;
           const tAlive = frame.players?.filter((p: any) => p.team === 'T' && p.isAlive).length || 0;
           
+          // Se CT tem mais vivos, CT ganha. Se T tem mais, T ganha. Se empate, verificar próximo frame
           if (ctAlive > tAlive) {
             ctScore++;
           } else if (tAlive > ctAlive) {
             tScore++;
           }
+          
+          console.log(`[Placar] Round ${frame.round} terminou - CT: ${ctAlive} vivos, T: ${tAlive} vivos. Placar: ${ctScore}x${tScore}`);
         }
       });
+    }
+    
+    // Detectar kills comparando frames anteriores com o atual
+    if (currentFrameIndex > 0) {
+      const prevFrame = frames[currentFrameIndex - 1];
+      if (prevFrame && currentFrame) {
+        const prevAlive = new Set((prevFrame.players || []).filter((p: any) => p.isAlive).map((p: any) => p.steamID));
+        const currAlive = new Set((currentFrame.players || []).filter((p: any) => p.isAlive).map((p: any) => p.steamID));
+        
+        // Encontrar jogadores que morreram
+        prevAlive.forEach((steamID) => {
+          if (!currAlive.has(steamID)) {
+            // Jogador morreu, encontrar killer e vítima
+            const victim = prevFrame.players?.find((p: any) => p.steamID === steamID);
+            const killer = currentFrame.events?.find((e: any) => e.type === 'kill')?.player;
+            
+            if (victim && killer && killer !== victim.name) {
+              setKillFeed(prev => {
+                // Verificar se já existe essa kill (evitar duplicatas)
+                const exists = prev.some(k => k.killer === killer && k.victim === victim.name && Date.now() - k.time < 1000);
+                if (exists) return prev;
+                
+                const newKill = {
+                  id: killFeedIdRef.current++,
+                  killer: killer,
+                  victim: victim.name,
+                  time: Date.now()
+                };
+                return [newKill, ...prev].slice(0, 10); // Manter apenas as últimas 10
+              });
+            }
+          }
+        });
+      }
     }
     
     setScoreCT(ctScore);
     setScoreT(tScore);
   }, [currentFrameIndex, frames, warmupRounds]);
+  
+  // Remover kills antigas do feed após 3 segundos
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setKillFeed(prev => prev.filter(kill => now - kill.time < 3000));
+    }, 100);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   // Carregar imagem do radar
   useEffect(() => {
@@ -1257,24 +1307,29 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
       ctx.fillText(player.name.substring(0, 8), pos.x, pos.y - 12);
     });
 
-    // Desenhar eventos (kills, bomb planted, etc.)
-    frame.events?.forEach((event: any) => {
-      if (!event.position) return;
-      const pos = worldToCanvas(event.position.x, event.position.y, width, height);
+    // Desenhar eventos (bomb planted, defused) - mostrar por alguns frames após o evento
+    // Verificar eventos dos últimos 30 frames (aproximadamente 1 segundo a 32 FPS) para manter os emojis visíveis
+    const framesToCheck = Math.max(0, currentFrameIndex - 30);
+    for (let i = currentFrameIndex; i >= framesToCheck; i--) {
+      const checkFrame = frames[i];
+      if (!checkFrame) continue;
       
-      ctx.font = 'bold 20px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      
-      if (event.type === 'bomb_planted') {
-        ctx.fillText('💣', pos.x, pos.y);
-      } else if (event.type === 'bomb_defused') {
-        ctx.fillText('🔧', pos.x, pos.y);
-      } else if (event.type === 'kill') {
-        // Kills já são mostradas quando o jogador morre (X vermelho)
-        // Não precisa desenhar nada aqui
-      }
-    });
+      checkFrame.events?.forEach((event: any) => {
+        if (!event.position) return;
+        
+        const pos = worldToCanvas(event.position.x, event.position.y, width, height);
+        
+        ctx.font = 'bold 32px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        if (event.type === 'bomb_planted') {
+          ctx.fillText('💣', pos.x, pos.y);
+        } else if (event.type === 'bomb_defused') {
+          ctx.fillText('🔧', pos.x, pos.y);
+        }
+      });
+    }
   };
 
   // Atualizar renderização quando frame muda
@@ -1381,13 +1436,40 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
           </div>
         </div>
 
-        {/* Canvas do radar */}
-        <div className="bg-black rounded-xl p-4 mb-6 flex justify-center relative">
-          <canvas
-            ref={canvasRef}
-            className="border-2 border-gray-700 rounded-lg"
-            style={{ maxWidth: '100%', height: 'auto' }}
-          />
+        {/* Canvas do radar e Kill Feed */}
+        <div className="flex gap-4 mb-6">
+          {/* Canvas do radar */}
+          <div className="bg-black rounded-xl p-4 flex justify-center relative flex-1">
+            <canvas
+              ref={canvasRef}
+              className="border-2 border-gray-700 rounded-lg"
+              style={{ maxWidth: '100%', height: 'auto' }}
+            />
+          </div>
+          
+          {/* Kill Feed */}
+          <div className="bg-gray-800 rounded-xl p-4 w-64">
+            <div className="text-sm font-bold text-gray-400 mb-3">Kill Feed</div>
+            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              {killFeed.length === 0 ? (
+                <div className="text-xs text-gray-500 text-center py-4">Nenhuma kill ainda</div>
+              ) : (
+                killFeed.map((kill) => (
+                  <div
+                    key={kill.id}
+                    className="bg-gray-900 rounded-lg p-2 text-xs animate-fade-in"
+                    style={{
+                      opacity: Math.max(0, 1 - (Date.now() - kill.time) / 3000)
+                    }}
+                  >
+                    <div className="text-orange-400 font-bold">{kill.killer}</div>
+                    <div className="text-gray-400">eliminou</div>
+                    <div className="text-red-400 font-bold">{kill.victim}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Controles */}
@@ -1402,7 +1484,16 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
                 Frame {currentFrameIndex + 1} / {frames.length}
               </span>
             </div>
-            <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
+            <div 
+              className="bg-gray-800 rounded-full h-2 overflow-hidden cursor-pointer relative"
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const percentage = clickX / rect.width;
+                const newFrameIndex = Math.floor(percentage * (frames.length - 1));
+                setCurrentFrameIndex(Math.max(0, Math.min(frames.length - 1, newFrameIndex)));
+              }}
+            >
               <div
                 className="bg-gradient-to-r from-orange-500 to-orange-600 h-full transition-all"
                 style={{ width: `${progress}%` }}
@@ -1438,7 +1529,7 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
             {/* Controle de velocidade */}
             <div className="flex items-center gap-2 bg-gray-800 rounded-xl px-4 py-2">
               <span className="text-sm text-gray-400">Velocidade:</span>
-              {[0.5, 1.0, 2.0, 4.0].map(speed => (
+              {[0.5, 1.0, 2.0, 4.0, 8.0].map(speed => (
                 <button
                   key={speed}
                   onClick={() => setPlaybackSpeed(speed)}
