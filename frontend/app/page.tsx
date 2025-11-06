@@ -399,40 +399,37 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     });
   }, [playerSteamID, killEvents, deathHeatmap]);
 
-  // Configurações de transformação de coordenadas (world → radar) para cada mapa
-  // Baseado nos valores oficiais do CS2 (de_dust2_radar.txt e JSON de overview)
-  // Cada mapa tem um "overview transform" com OriginX, OriginY e Scale
-  interface MapTransform {
-    originX: number;
-    originY: number;
-    scale: number;
-  }
+// Configurações de transformação de coordenadas (world → radar) para cada mapa
+// Baseado nos valores oficiais do CS2 (de_dust2_radar.txt e JSON de overview)
+// Cada mapa tem um "overview transform" com OriginX, OriginY e Scale
+interface MapTransform {
+  originX: number;
+  originY: number;
+  scale: number;
+}
 
-  const radarTransforms: Record<string, MapTransform> = {
-    'de_dust2': { originX: -2476, originY: 3239, scale: 5.25 },
-    // de_inferno: Valores corrigidos baseados em pesquisa
-    // Valores oficiais do CS2 para de_inferno
-    'de_inferno': { originX: -2087, originY: 3870, scale: 5.15 },
-    'de_mirage': { originX: -3230, originY: 1713, scale: 5.0 },
-    'de_nuke': { originX: -3453, originY: 2887, scale: 7.0 },
-    'de_overpass': { originX: -4831, originY: 1781, scale: 5.2 },
-    'de_vertigo': { originX: -3168, originY: 1762, scale: 5.0 },
-    // Valores padrão para mapas não listados (aproximações)
-    'de_ancient': { originX: -2950, originY: 2168, scale: 5.0 },
-    'de_anubis': { originX: -2856, originY: 2856, scale: 5.0 },
-    'de_train': { originX: -3000, originY: 3000, scale: 5.0 },
-    'de_cache': { originX: -3000, originY: 3000, scale: 5.0 },
-  };
+const radarTransforms: Record<string, MapTransform> = {
+  'de_dust2': { originX: -2476, originY: 3239, scale: 5.25 },
+  'de_inferno': { originX: -2087, originY: 3870, scale: 5.15 },
+  'de_mirage': { originX: -3230, originY: 1713, scale: 5.0 },
+  'de_nuke': { originX: -3453, originY: 2887, scale: 7.0 },
+  'de_overpass': { originX: -4831, originY: 1781, scale: 5.2 },
+  'de_vertigo': { originX: -3168, originY: 1762, scale: 5.0 },
+  'de_ancient': { originX: -2950, originY: 2168, scale: 5.0 },
+  'de_anubis': { originX: -2856, originY: 2856, scale: 5.0 },
+  'de_train': { originX: -3000, originY: 3000, scale: 5.0 },
+  'de_cache': { originX: -3000, originY: 3000, scale: 5.0 },
+};
 
-  // Configurações de heatmap por mapa (offset e tamanho de visualização)
-  interface HeatmapConfig {
-    offsetX: number;      // Offset X (positivo = direita, negativo = esquerda)
-    offsetY: number;      // Offset Y (positivo = baixo, negativo = cima)
-    blurRadius: number;  // Tamanho do raio de visualização dos pontos
-    zoom: number;         // Zoom da visualização do radar (1.0 = normal, >1.0 = zoom in, <1.0 = zoom out)
-  }
+// Configurações de heatmap por mapa (offset e tamanho de visualização)
+interface HeatmapConfig {
+  offsetX: number;      // Offset X (positivo = direita, negativo = esquerda)
+  offsetY: number;      // Offset Y (positivo = baixo, negativo = cima)
+  blurRadius: number;  // Tamanho do raio de visualização dos pontos
+  zoom: number;         // Zoom da visualização do radar (1.0 = normal, >1.0 = zoom in, <1.0 = zoom out)
+}
 
-  const heatmapConfigs: Record<string, HeatmapConfig> = {
+const heatmapConfigs: Record<string, HeatmapConfig> = {
     // de_inferno: Configuração ajustada
     'de_inferno': {
       offsetX: 60,      // 80px para a direita (40px + 40px)
@@ -955,7 +952,512 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
   );
 };
 
-// Componente DemoPlayer2D removido completamente
+// Componente Player2DViewer
+interface Player2DViewerProps {
+  mapName: string;
+  uploadId: string;
+  API_BASE_URL: string;
+}
+
+const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_BASE_URL }) => {
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const radarImageRef = React.useRef<HTMLImageElement | null>(null);
+  const [frames, setFrames] = useState<any[]>([]);
+  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const animationFrameRef = React.useRef<number | null>(null);
+  const lastUpdateTimeRef = React.useRef<number>(0);
+  const [scoreCT, setScoreCT] = useState(0);
+  const [scoreT, setScoreT] = useState(0);
+  const [warmupRounds, setWarmupRounds] = useState(4);
+
+  // Obter transform do mapa (garantir acesso ao radarTransforms)
+  // Definir localmente caso não esteja acessível do escopo do módulo
+  interface LocalMapTransform {
+    originX: number;
+    originY: number;
+    scale: number;
+  }
+  const localRadarTransforms: Record<string, LocalMapTransform> = {
+    'de_dust2': { originX: -2476, originY: 3239, scale: 5.25 },
+    'de_inferno': { originX: -2087, originY: 3870, scale: 5.15 },
+    'de_mirage': { originX: -3230, originY: 1713, scale: 5.0 },
+    'de_nuke': { originX: -3453, originY: 2887, scale: 7.0 },
+    'de_overpass': { originX: -4831, originY: 1781, scale: 5.2 },
+    'de_vertigo': { originX: -3168, originY: 1762, scale: 5.0 },
+    'de_ancient': { originX: -2950, originY: 2168, scale: 5.0 },
+    'de_anubis': { originX: -2856, originY: 2856, scale: 5.0 },
+    'de_train': { originX: -3000, originY: 3000, scale: 5.0 },
+    'de_cache': { originX: -3000, originY: 3000, scale: 5.0 },
+  };
+  
+  const getMapTransform = (map: string): LocalMapTransform => {
+    // Usar localRadarTransforms (radarTransforms do módulo pode não estar acessível)
+    return localRadarTransforms[map] || localRadarTransforms['de_dust2'] || { originX: -2476, originY: 3239, scale: 5.25 };
+  };
+
+  // Carregar frames do backend
+  useEffect(() => {
+    if (!uploadId) {
+      setError('Upload ID não encontrado');
+      setIsLoading(false);
+      return;
+    }
+
+    const token = localStorage.getItem('auth_token');
+    fetch(`http://localhost:4000/api/demo/${uploadId}/frames`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          setError(data.error);
+          setIsLoading(false);
+          return;
+        }
+        const framesData = data.frames || [];
+        setFrames(framesData);
+        
+        // Calcular placar e warmup rounds
+        if (framesData.length > 0) {
+          // Assumir que os primeiros 4 rounds são warmup (GC)
+          setWarmupRounds(4);
+          
+          // Calcular placar baseado nos eventos de round_end
+          let ctScore = 0;
+          let tScore = 0;
+          const processedRounds = new Set<number>();
+          
+          framesData.forEach((frame: any) => {
+            frame.events?.forEach((event: any) => {
+              if (event.type === 'round_end' && frame.round > 4 && !processedRounds.has(frame.round)) {
+                processedRounds.add(frame.round);
+                
+                // Tentar determinar o vencedor baseado nos jogadores vivos no final do round
+                // Esta é uma aproximação - o ideal seria ter o winner no evento
+                const ctAlive = frame.players?.filter((p: any) => p.team === 'CT' && p.isAlive).length || 0;
+                const tAlive = frame.players?.filter((p: any) => p.team === 'T' && p.isAlive).length || 0;
+                
+                // Heurística simples: time com mais jogadores vivos ganha
+                if (ctAlive > tAlive) {
+                  ctScore++;
+                } else if (tAlive > ctAlive) {
+                  tScore++;
+                }
+              }
+            });
+          });
+          
+          setScoreCT(ctScore);
+          setScoreT(tScore);
+        }
+        
+        setIsLoading(false);
+      })
+      .catch(err => {
+        setError('Erro ao carregar frames: ' + err.message);
+        setIsLoading(false);
+      });
+  }, [uploadId]);
+  
+  // Atualizar placar dinamicamente conforme a reprodução avança
+  useEffect(() => {
+    if (frames.length === 0 || currentFrameIndex === 0) return;
+    
+    const currentFrame = frames[currentFrameIndex];
+    if (!currentFrame) return;
+    
+    // Recalcular placar baseado nos rounds que já terminaram até o frame atual
+    let ctScore = 0;
+    let tScore = 0;
+    const processedRounds = new Set<number>();
+    
+    // Processar apenas frames até o frame atual
+    for (let i = 0; i <= currentFrameIndex; i++) {
+      const frame = frames[i];
+      if (!frame) continue;
+      
+      frame.events?.forEach((event: any) => {
+        if (event.type === 'round_end' && frame.round > warmupRounds && !processedRounds.has(frame.round)) {
+          processedRounds.add(frame.round);
+          
+          // Determinar vencedor baseado nos jogadores vivos
+          const ctAlive = frame.players?.filter((p: any) => p.team === 'CT' && p.isAlive).length || 0;
+          const tAlive = frame.players?.filter((p: any) => p.team === 'T' && p.isAlive).length || 0;
+          
+          if (ctAlive > tAlive) {
+            ctScore++;
+          } else if (tAlive > ctAlive) {
+            tScore++;
+          }
+        }
+      });
+    }
+    
+    setScoreCT(ctScore);
+    setScoreT(tScore);
+  }, [currentFrameIndex, frames, warmupRounds]);
+
+  // Carregar imagem do radar
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = `http://localhost:4000/api/maps/${mapName}`;
+    img.onload = () => {
+      radarImageRef.current = img;
+      renderFrame();
+    };
+    img.onerror = () => {
+      console.error('Erro ao carregar imagem do radar');
+    };
+  }, [mapName]);
+
+  // Função de transformação de coordenadas (mesma do heatmap)
+  const worldToMap = (x: number, y: number, t: LocalMapTransform): { mapX: number; mapY: number } => {
+    const mapX = (x - t.originX) / t.scale;
+    const mapY = (t.originY - y) / t.scale;
+    return { mapX, mapY };
+  };
+
+  // Calcular offset dinâmico baseado nas posições dos jogadores (igual ao heatmap)
+  const dynamicOffsetRef = React.useRef({ x: 512, y: 512 });
+  
+  React.useEffect(() => {
+    if (frames.length === 0) {
+      dynamicOffsetRef.current = { x: 512, y: 512 };
+      return;
+    }
+    
+    const transform = getMapTransform(mapName);
+    
+    // Função local para worldToMap (mesma lógica)
+    const worldToMapLocal = (x: number, y: number, t: LocalMapTransform): { mapX: number; mapY: number } => {
+      const mapX = (x - t.originX) / t.scale;
+      const mapY = (t.originY - y) / t.scale;
+      return { mapX, mapY };
+    };
+    
+    const allCoords: { mapX: number; mapY: number }[] = [];
+    
+    // Coletar todas as coordenadas de todos os frames
+    frames.forEach(frame => {
+      frame.players?.forEach((player: any) => {
+        if (player.position && player.position.x !== undefined && player.position.y !== undefined) {
+          const { mapX, mapY } = worldToMapLocal(player.position.x, player.position.y, transform);
+          allCoords.push({ mapX, mapY });
+        }
+      });
+    });
+    
+    if (allCoords.length > 0) {
+      // Calcular min/max para centralizar (usar reduce para evitar stack overflow)
+      let minX = allCoords[0].mapX;
+      let maxX = allCoords[0].mapX;
+      let minY = allCoords[0].mapY;
+      let maxY = allCoords[0].mapY;
+      
+      for (let i = 1; i < allCoords.length; i++) {
+        const coord = allCoords[i];
+        if (coord.mapX < minX) minX = coord.mapX;
+        if (coord.mapX > maxX) maxX = coord.mapX;
+        if (coord.mapY < minY) minY = coord.mapY;
+        if (coord.mapY > maxY) maxY = coord.mapY;
+      }
+      
+      // Calcular offset para centralizar no canvas
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      
+      dynamicOffsetRef.current = {
+        x: 512 - centerX,
+        y: 512 - centerY,
+      };
+      
+      console.log(`[Player2D] Offset calculado: (${dynamicOffsetRef.current.x.toFixed(1)}, ${dynamicOffsetRef.current.y.toFixed(1)})`);
+      console.log(`[Player2D] Range: X[${minX.toFixed(1)}, ${maxX.toFixed(1)}], Y[${minY.toFixed(1)}, ${maxY.toFixed(1)}]`);
+      console.log(`[Player2D] Total de coordenadas processadas: ${allCoords.length}`);
+    } else {
+      dynamicOffsetRef.current = { x: 512, y: 512 };
+    }
+  }, [frames, mapName]);
+
+  const worldToCanvas = (x: number, y: number, width: number, height: number) => {
+    const transform = getMapTransform(mapName);
+    const { mapX, mapY } = worldToMap(x, y, transform);
+    
+    // Usar offset dinâmico calculado (igual ao heatmap)
+    let radarX = mapX + dynamicOffsetRef.current.x;
+    let radarY = mapY + dynamicOffsetRef.current.y;
+    
+    let canvasX = (radarX / 1024) * width;
+    let canvasY = (radarY / 1024) * height;
+    return {
+      x: Math.max(0, Math.min(width, canvasX)),
+      y: Math.max(0, Math.min(height, canvasY)),
+    };
+  };
+
+  // Renderizar frame atual
+  const renderFrame = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || frames.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx || !radarImageRef.current) return;
+
+    const width = canvas.width = 1024;
+    const height = canvas.height = 1024;
+
+    const frame = frames[currentFrameIndex];
+    if (!frame) return;
+
+    // Limpar canvas
+    ctx.clearRect(0, 0, width, height);
+
+    // Desenhar radar
+    ctx.drawImage(radarImageRef.current, 0, 0, width, height);
+
+    // Desenhar jogadores
+    frame.players?.forEach((player: any) => {
+      const pos = worldToCanvas(player.position.x, player.position.y, width, height);
+      
+      if (!player.isAlive) {
+        // Desenhar X quando morto
+        ctx.fillStyle = '#FF0000';
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('❌', pos.x, pos.y);
+        return;
+      }
+
+      const teamColor = player.team === 'CT' ? '#4A9EFF' : '#FF6B35';
+      
+      // Desenhar círculo do jogador
+      ctx.fillStyle = teamColor;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Borda branca
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Nome do jogador (abreviado)
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(player.name.substring(0, 8), pos.x, pos.y - 12);
+    });
+
+    // Desenhar eventos (kills, bomb planted, etc.)
+    frame.events?.forEach((event: any) => {
+      if (!event.position) return;
+      const pos = worldToCanvas(event.position.x, event.position.y, width, height);
+      
+      ctx.font = 'bold 20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      if (event.type === 'bomb_planted') {
+        ctx.fillText('💣', pos.x, pos.y);
+      } else if (event.type === 'bomb_defused') {
+        ctx.fillText('🔧', pos.x, pos.y);
+      } else if (event.type === 'kill') {
+        // Kills já são mostradas quando o jogador morre (X vermelho)
+        // Não precisa desenhar nada aqui
+      }
+    });
+  };
+
+  // Atualizar renderização quando frame muda
+  useEffect(() => {
+    renderFrame();
+  }, [currentFrameIndex, frames, mapName, radarImageRef.current]);
+
+  // Loop de animação
+  useEffect(() => {
+    if (!isPlaying || frames.length === 0) {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      return;
+    }
+
+    const targetFPS = 32 * playbackSpeed; // 32 FPS base * velocidade
+    const frameInterval = 1000 / targetFPS;
+
+    const animate = (currentTime: number) => {
+      if (currentTime - lastUpdateTimeRef.current >= frameInterval) {
+        setCurrentFrameIndex(prev => {
+          const next = prev + 1;
+          if (next >= frames.length) {
+            setIsPlaying(false);
+            return prev;
+          }
+          return next;
+        });
+        lastUpdateTimeRef.current = currentTime;
+      }
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isPlaying, playbackSpeed, frames.length]);
+
+  if (isLoading) {
+    return (
+      <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-12 text-center">
+        <Loader2 className="w-12 h-12 text-orange-500 animate-spin mx-auto mb-4" />
+        <p className="text-gray-400">Carregando frames do demo...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-gray-900 border-2 border-red-500/50 rounded-3xl p-12 text-center">
+        <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+        <p className="text-red-400">{error}</p>
+      </div>
+    );
+  }
+
+  if (frames.length === 0) {
+    return (
+      <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-12 text-center">
+        <p className="text-gray-400">Nenhum frame encontrado.</p>
+      </div>
+    );
+  }
+
+  const currentFrame = frames[currentFrameIndex];
+  const progress = frames.length > 0 ? (currentFrameIndex / (frames.length - 1)) * 100 : 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
+        <div className="flex items-center gap-4 mb-6">
+          <Play className="w-8 h-8 text-orange-400" />
+          <div>
+            <h3 className="text-2xl font-bold text-white">Player 2D</h3>
+            <p className="text-sm text-gray-400">Visualização em tempo real da partida</p>
+          </div>
+        </div>
+
+        {/* Placar */}
+        <div className="bg-gray-800 rounded-xl p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="text-center">
+                <div className="text-sm text-gray-400 mb-1">Terrorists</div>
+                <div className="text-3xl font-bold text-orange-500">{scoreT}</div>
+              </div>
+              <div className="text-gray-500 text-xl">×</div>
+              <div className="text-center">
+                <div className="text-sm text-gray-400 mb-1">Counter-Terrorists</div>
+                <div className="text-3xl font-bold text-blue-500">{scoreCT}</div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-400">Round {currentFrame?.round || 0}</div>
+              {warmupRounds > 0 && (currentFrame?.round || 0) <= warmupRounds && (
+                <div className="text-xs text-yellow-400 mt-1">Warmup</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Canvas do radar */}
+        <div className="bg-black rounded-xl p-4 mb-6 flex justify-center relative">
+          <canvas
+            ref={canvasRef}
+            className="border-2 border-gray-700 rounded-lg"
+            style={{ maxWidth: '100%', height: 'auto' }}
+          />
+        </div>
+
+        {/* Controles */}
+        <div className="space-y-4">
+          {/* Barra de progresso */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-gray-400">
+                Round {currentFrame?.round || 0} - {currentFrame?.clock || '00:00'}
+              </span>
+              <span className="text-sm text-gray-400">
+                Frame {currentFrameIndex + 1} / {frames.length}
+              </span>
+            </div>
+            <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-orange-500 to-orange-600 h-full transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Botões de controle */}
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => setCurrentFrameIndex(Math.max(0, currentFrameIndex - 100))}
+              className="bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-xl transition-all"
+              disabled={currentFrameIndex === 0}
+            >
+              <SkipBack className="w-5 h-5" />
+            </button>
+
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              className="bg-gradient-to-r from-orange-500 to-orange-600 text-black p-4 rounded-xl font-bold hover:scale-105 transition-all"
+            >
+              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+            </button>
+
+            <button
+              onClick={() => setCurrentFrameIndex(Math.min(frames.length - 1, currentFrameIndex + 100))}
+              className="bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-xl transition-all"
+              disabled={currentFrameIndex >= frames.length - 1}
+            >
+              <SkipForward className="w-5 h-5" />
+            </button>
+
+            {/* Controle de velocidade */}
+            <div className="flex items-center gap-2 bg-gray-800 rounded-xl px-4 py-2">
+              <span className="text-sm text-gray-400">Velocidade:</span>
+              {[0.5, 1.0, 2.0, 4.0].map(speed => (
+                <button
+                  key={speed}
+                  onClick={() => setPlaybackSpeed(speed)}
+                  className={`px-3 py-1 rounded-lg text-sm font-bold transition-all ${
+                    playbackSpeed === speed
+                      ? 'bg-orange-500 text-black'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  {speed}x
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type JobLifecycleStatus = JobStatus | 'idle';
@@ -1036,7 +1538,7 @@ const CS2ProAnalyzerApp = () => {
   const [jobStatus, setJobStatus] = useState<JobLifecycleStatus>('idle');
   const [jobError, setJobError] = useState<string | null>(null);
   // Estados para a página de resultados (movidos para fora do condicional para evitar problemas de hidratação)
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'players' | 'teams' | 'rounds' | 'heatmap' | 'chat'>('overview');
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'players' | 'teams' | 'rounds' | 'heatmap' | 'player2d' | 'chat'>('overview');
   const [teamComparison, setTeamComparison] = useState<'both' | 'ct' | 't'>('both');
   const [selectedPlayerFilter, setSelectedPlayerFilter] = useState<string>('all'); // Filtro de jogador: 'all' ou steamID
   const [selectedPlayersForComparison, setSelectedPlayersForComparison] = useState<number[]>([]); // Jogadores selecionados para comparação
@@ -2572,6 +3074,7 @@ const CS2ProAnalyzerApp = () => {
                 { id: 'teams', label: 'Times', icon: Shield },
                 { id: 'rounds', label: 'Rounds', icon: Target },
                 ...(user?.isPremium ? [{ id: 'heatmap', label: 'Heatmap', icon: Flame }] : []),
+                { id: 'player2d', label: 'Player 2D', icon: Play },
                 { id: 'chat', label: 'RUSH Chat', icon: MessageSquare },
               ].map(({ id, label, icon: Icon }) => (
                 <button
@@ -4262,7 +4765,16 @@ const CS2ProAnalyzerApp = () => {
           </div>
           )}
 
-
+          {/* Tab: Player 2D */}
+          {selectedTab === 'player2d' && (
+            <div className="animate-fade-in">
+              <Player2DViewer 
+                mapName={analysis?.map || 'unknown'}
+                uploadId={uploadedDemo?.id || ''}
+                API_BASE_URL={API_BASE_URL}
+              />
+            </div>
+          )}
 
           {/* Tab: Chat RUSH */}
           {selectedTab === 'chat' && (

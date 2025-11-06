@@ -241,6 +241,81 @@ app.post('/chat/rush', authenticateToken, (req: AuthenticatedRequest, res: Respo
   res.json({ reply });
 });
 
+// Rota para extrair frames do demo para player 2D
+app.get('/api/demo/:uploadId/frames', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const { uploadId } = req.params;
+  const uploadInfo = uploadsStore.get(uploadId);
+
+  if (!uploadInfo) {
+    return res.status(404).json({ error: 'Upload não encontrado.' });
+  }
+
+  const { spawn } = require('child_process');
+  const path = require('path');
+  const fs = require('fs');
+
+  try {
+    // Caminho para o executável extract-frames
+    const processorName = process.platform === 'win32' ? 'extract-frames.exe' : 'extract-frames';
+    const processorPath = path.resolve(__dirname, '..', 'processor', processorName);
+
+    // Verificar se existe, se não, compilar
+    if (!fs.existsSync(processorPath)) {
+      // Tentar compilar
+      const { execSync } = require('child_process');
+      const goPath = path.resolve(__dirname, '..', 'processor', 'extract-frames.go');
+      if (fs.existsSync(goPath)) {
+        try {
+          execSync(`go build -o "${processorPath}" "${goPath}"`, { cwd: path.dirname(goPath) });
+        } catch (err) {
+          return res.status(500).json({ error: 'Erro ao compilar extract-frames. Certifique-se de que Go está instalado.' });
+        }
+      } else {
+        return res.status(500).json({ error: 'extract-frames.go não encontrado.' });
+      }
+    }
+
+    // Executar extract-frames
+    const childProcess = spawn(processorPath, [uploadInfo.path], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    childProcess.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    childProcess.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    childProcess.on('close', (code: number) => {
+      if (code !== 0) {
+        console.error('Erro ao extrair frames:', stderr);
+        return res.status(500).json({ error: 'Erro ao extrair frames do demo.', details: stderr });
+      }
+
+      try {
+        const frameData = JSON.parse(stdout);
+        res.json(frameData);
+      } catch (err) {
+        console.error('Erro ao parsear JSON:', err);
+        res.status(500).json({ error: 'Erro ao processar dados dos frames.' });
+      }
+    });
+
+    childProcess.on('error', (err: Error) => {
+      console.error('Erro ao executar extract-frames:', err);
+      res.status(500).json({ error: 'Erro ao executar extract-frames.', details: err.message });
+    });
+  } catch (err) {
+    console.error('Erro:', err);
+    res.status(500).json({ error: 'Erro interno ao processar frames.' });
+  }
+});
+
 // Rota para servir arquivos de mapa da pasta local
 app.get('/api/maps/:mapName', (req: Request, res: Response) => {
   // Decodificar o nome do mapa (pode vir codificado na URL)
