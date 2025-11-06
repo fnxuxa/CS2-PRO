@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
-import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair, Shield, Skull, TrendingDown, Play, Pause, SkipForward, SkipBack } from 'lucide-react';
+import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair, Shield, Skull, TrendingDown, Play, Pause, SkipForward, SkipBack, LogOut } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 type View = 'landing' | 'upload-area' | 'select-analysis' | 'processing' | 'results';
@@ -1009,6 +1009,17 @@ const pressureBadgeClasses: Record<HeatmapHotspot['pressure'], string> = {
 
 const API_BASE_URL = 'http://localhost:4000';
 
+interface User {
+  steamId: string;
+  steamName: string;
+  avatar: string;
+  plan: 'free' | 'premium';
+  freeAnalysesUsed: number;
+  premiumAnalysesRemaining: number;
+  isPremium: boolean;
+  canUseAnalysis: { allowed: boolean; reason?: string };
+}
+
 const CS2ProAnalyzerApp = () => {
   const [currentPage, setCurrentPage] = useState<View>('landing');
   const [uploadedDemo, setUploadedDemo] = useState<UploadedDemo | null>(null);
@@ -1030,6 +1041,10 @@ const CS2ProAnalyzerApp = () => {
   const [selectedPlayerFilter, setSelectedPlayerFilter] = useState<string>('all'); // Filtro de jogador: 'all' ou steamID
   const [selectedPlayersForComparison, setSelectedPlayersForComparison] = useState<number[]>([]); // Jogadores selecionados para comparação
   const [hoveredPlayer, setHoveredPlayer] = useState<number | null>(null); // SteamID do jogador com hover
+  // Estados de autenticação
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [chatQuestionCount, setChatQuestionCount] = useState(0);
 
   // Função para extrair nomes dos times do nome do arquivo
   const extractTeamNames = (fileName: string): { team1?: string; team2?: string } | null => {
@@ -1050,6 +1065,63 @@ const CS2ProAnalyzerApp = () => {
     if (!analysis) return [];
     return analysis.playerMetrics ?? analysis.teamMetrics ?? [];
   }, [analysis]);
+
+  // Verificar autenticação ao carregar
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (typeof window === 'undefined') return;
+      
+      const token = localStorage.getItem('auth_token');
+      
+      // Verificar se há token na URL (após login Steam)
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenFromUrl = urlParams.get('token');
+      
+      if (tokenFromUrl) {
+        localStorage.setItem('auth_token', tokenFromUrl);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+      
+      const finalToken = tokenFromUrl || token;
+      
+      if (!finalToken) {
+        setIsLoadingAuth(false);
+        // Redirecionar para login se não estiver na landing page
+        if (currentPage !== 'landing') {
+          window.location.href = '/login';
+        }
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+          headers: {
+            'Authorization': `Bearer ${finalToken}`,
+          },
+        });
+        
+        if (response.ok) {
+          const userData = await response.json();
+          setUser(userData);
+        } else {
+          localStorage.removeItem('auth_token');
+          if (currentPage !== 'landing') {
+            window.location.href = '/login';
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao verificar autenticação:', error);
+        localStorage.removeItem('auth_token');
+        if (currentPage !== 'landing') {
+          window.location.href = '/login';
+        }
+      } finally {
+        setIsLoadingAuth(false);
+      }
+    };
+    
+    checkAuth();
+  }, []);
 
   // Gerar partículas apenas no cliente (após montagem)
   useEffect(() => {
@@ -1145,9 +1217,19 @@ const CS2ProAnalyzerApp = () => {
     const formData = new FormData();
     formData.append('demo', file);
 
+    // Verificar autenticação
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      window.location.href = '/login';
+      return;
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
         body: formData,
       });
 
@@ -1187,9 +1269,30 @@ const CS2ProAnalyzerApp = () => {
     event?.preventDefault();
     if (!chatInput.trim()) return;
 
+    // Verificar autenticação
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      window.location.href = '/login';
+      return;
+    }
+
+    // Verificar limite de perguntas para usuários gratuitos
+    if (user && !user.isPremium && chatQuestionCount >= 2) {
+      setChatMessages(prev => [...prev, {
+        role: 'ai',
+        text: '❌ Você atingiu o limite de 2 perguntas gratuitas. Faça upgrade para continuar conversando comigo! 💎'
+      }]);
+      return;
+    }
+
     const message = chatInput.trim();
     setChatMessages(prev => [...prev, { role: 'user', text: message }]);
     setChatInput('');
+
+    // Incrementar contador de perguntas
+    if (user && !user.isPremium) {
+      setChatQuestionCount(prev => prev + 1);
+    }
 
     const lower = message.toLowerCase();
 
@@ -1201,7 +1304,10 @@ const CS2ProAnalyzerApp = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/chat/rush`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({
           message,
           uploadId: uploadedDemo?.id ?? null,
@@ -1231,6 +1337,22 @@ const CS2ProAnalyzerApp = () => {
       return;
     }
 
+    // Verificar autenticação
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      window.location.href = '/login';
+      return;
+    }
+
+    // Verificar se pode usar análise
+    if (user && !user.canUseAnalysis.allowed) {
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'ai', text: `❌ ${user.canUseAnalysis.reason || 'Você não pode usar mais análises.'}` },
+      ]);
+      return;
+    }
+
     setAnalysisType('player'); // Mantemos 'player' para compatibilidade
     setIsProcessing(true);
     setProgress(0);
@@ -1245,7 +1367,10 @@ const CS2ProAnalyzerApp = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/analysis/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify(requestBody),
       });
 
@@ -1428,16 +1553,55 @@ const CS2ProAnalyzerApp = () => {
                 CS2<span className="text-orange-500">PRO</span>
               </h1>
             </div>
-            <button 
-              onClick={() => setCurrentPage('upload-area')}
-              className="relative bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-black px-8 py-3 rounded-xl font-black shadow-xl hover:shadow-2xl shadow-orange-500/50 hover:shadow-orange-500/80 transition-all duration-300 hover:scale-110 glow-orange overflow-hidden group"
-            >
-              <span className="relative z-10 flex items-center gap-2">
-                Começar
-                <Sparkles className="w-4 h-4" />
-              </span>
-              <div className="absolute inset-0 shimmer"></div>
-            </button>
+            <div className="flex items-center gap-4">
+              {/* Switch DEV para Premium - apenas quando logado */}
+              {user && (
+                <div className="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2 border border-gray-700">
+                  <span className="text-xs text-gray-400">DEV:</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={user.isPremium}
+                      onChange={async () => {
+                        const token = localStorage.getItem('auth_token');
+                        if (token) {
+                          try {
+                            const response = await fetch(`${API_BASE_URL}/api/auth/dev/toggle-premium`, {
+                              method: 'POST',
+                              headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                              },
+                            });
+                            if (response.ok) {
+                              const data = await response.json();
+                              setUser(data);
+                            }
+                          } catch (error) {
+                            console.error('Erro ao toggle premium:', error);
+                          }
+                        }
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-orange-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                    <span className="ml-2 text-xs text-gray-300 font-semibold">
+                      {user.isPremium ? 'Premium' : 'Free'}
+                    </span>
+                  </label>
+                </div>
+              )}
+              <button 
+                onClick={() => setCurrentPage('upload-area')}
+                className="relative bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-black px-8 py-3 rounded-xl font-black shadow-xl hover:shadow-2xl shadow-orange-500/50 hover:shadow-orange-500/80 transition-all duration-300 hover:scale-110 glow-orange overflow-hidden group"
+              >
+                <span className="relative z-10 flex items-center gap-2">
+                  Começar
+                  <Sparkles className="w-4 h-4" />
+                </span>
+                <div className="absolute inset-0 shimmer"></div>
+              </button>
+            </div>
           </nav>
 
           {/* Hero Content */}
@@ -1699,6 +1863,24 @@ const CS2ProAnalyzerApp = () => {
                 CS2<span className="text-orange-500">PRO</span>
               </h1>
             </div>
+            {/* Botão de Logout */}
+            {user && (
+              <button
+                onClick={() => {
+                  localStorage.removeItem('auth_token');
+                  setUser(null);
+                  setUploadedDemo(null);
+                  setAnalysis(null);
+                  setCurrentPage('landing');
+                  window.location.href = '/login';
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/50 rounded-lg transition-colors group"
+                title="Sair da conta"
+              >
+                <LogOut className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                <span className="text-sm font-semibold">Sair</span>
+              </button>
+            )}
           </div>
 
           {/* Main Upload Area */}
@@ -2263,13 +2445,34 @@ const CS2ProAnalyzerApp = () => {
           
           {/* Header com Score */}
           <div className="bg-gradient-to-r from-gray-900 via-gray-900 to-gray-900 border-2 border-gray-800 rounded-2xl p-8 mb-10">
-            <button 
-              onClick={() => setCurrentPage('upload-area')}
-              className="text-gray-400 hover:text-white mb-6 flex items-center gap-2 transition-colors group"
-            >
-              <ArrowRight className="w-5 h-5 rotate-180 group-hover:-translate-x-1 transition-transform" />
-              Voltar
-            </button>
+            <div className="flex items-center justify-between mb-6">
+              <button 
+                onClick={() => setCurrentPage('upload-area')}
+                className="text-gray-400 hover:text-white flex items-center gap-2 transition-colors group"
+              >
+                <ArrowRight className="w-5 h-5 rotate-180 group-hover:-translate-x-1 transition-transform" />
+                Voltar
+              </button>
+              
+              {/* Botão de Logout */}
+              {user && (
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('auth_token');
+                    setUser(null);
+                    setUploadedDemo(null);
+                    setAnalysis(null);
+                    setCurrentPage('landing');
+                    window.location.href = '/login';
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/50 rounded-lg transition-colors group"
+                  title="Sair da conta"
+                >
+                  <LogOut className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                  <span className="text-sm font-semibold">Sair</span>
+                </button>
+              )}
+            </div>
             
             <div className="grid md:grid-cols-3 gap-6 mb-6">
               <div className="md:col-span-1">
@@ -2368,12 +2571,21 @@ const CS2ProAnalyzerApp = () => {
                 { id: 'players', label: 'Jogadores', icon: Users },
                 { id: 'teams', label: 'Times', icon: Shield },
                 { id: 'rounds', label: 'Rounds', icon: Target },
-                { id: 'heatmap', label: 'Heatmap', icon: Flame },
+                ...(user?.isPremium ? [{ id: 'heatmap', label: 'Heatmap', icon: Flame }] : []),
                 { id: 'chat', label: 'RUSH Chat', icon: MessageSquare },
               ].map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
-                  onClick={() => setSelectedTab(id as any)}
+                  onClick={() => {
+                    if (id === 'heatmap' && !user?.isPremium) {
+                      setChatMessages(prev => [...prev, {
+                        role: 'ai',
+                        text: '❌ Heatmap está disponível apenas para usuários Premium. Faça upgrade para desbloquear! 💎'
+                      }]);
+                      return;
+                    }
+                    setSelectedTab(id as any);
+                  }}
                   className={`flex items-center gap-2 px-4 sm:px-6 py-3 rounded-xl font-bold transition-all-smooth whitespace-nowrap hover:scale-105 ${
                     selectedTab === id
                       ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-black shadow-lg shadow-orange-500/50 scale-105'
@@ -3007,6 +3219,7 @@ const CS2ProAnalyzerApp = () => {
 
               {/* Seção de Trades Detalhados */}
               {filteredTradeKills && filteredTradeKills.length > 0 && (
+                user?.isPremium ? (
                 <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
                   <h3 className="text-2xl font-bold text-white mb-6">Análise de Trades</h3>
                   <p className="text-gray-400 mb-6 text-sm">
@@ -3081,6 +3294,39 @@ const CS2ProAnalyzerApp = () => {
                       ))}
                   </div>
                 </div>
+                ) : (
+                  <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-8 text-center">
+                    <Crown className="w-12 h-12 text-orange-500 mx-auto mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Análise de Trades Premium</h3>
+                    <p className="text-gray-400 mb-4">A análise detalhada de trades está disponível apenas para usuários Premium.</p>
+                    <button
+                      onClick={async () => {
+                        const token = localStorage.getItem('auth_token');
+                        if (token) {
+                          try {
+                            const response = await fetch(`${API_BASE_URL}/api/auth/purchase`, {
+                              method: 'POST',
+                              headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                              },
+                            });
+                            if (response.ok) {
+                              const data = await response.json();
+                              setUser(prev => prev ? { ...prev, ...data, isPremium: true } : null);
+                              alert('Upgrade realizado com sucesso!');
+                            }
+                          } catch (error) {
+                            alert('Erro ao realizar upgrade.');
+                          }
+                        }
+                      }}
+                      className="bg-gradient-to-r from-orange-500 to-orange-600 text-black px-6 py-3 rounded-xl font-bold hover:scale-105 transition-transform"
+                    >
+                      💎 Upgrade para Premium
+                    </button>
+                  </div>
+                )
               )}
 
               {/* Gráfico de K/D por Jogador */}
@@ -3239,6 +3485,7 @@ const CS2ProAnalyzerApp = () => {
 
               {/* Consistência e Performance Round-to-Round */}
               {filteredRoundPerformances && filteredRoundPerformances.length > 0 && (
+                user?.isPremium ? (
                 <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
                   <h3 className="text-2xl font-bold text-white mb-6">📊 Consistência</h3>
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 mb-6">
@@ -3300,6 +3547,39 @@ const CS2ProAnalyzerApp = () => {
                     })}
                   </div>
                 </div>
+                ) : (
+                  <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-8 text-center">
+                    <Crown className="w-12 h-12 text-orange-500 mx-auto mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Consistência Premium</h3>
+                    <p className="text-gray-400 mb-4">A análise de consistência está disponível apenas para usuários Premium.</p>
+                    <button
+                      onClick={async () => {
+                        const token = localStorage.getItem('auth_token');
+                        if (token) {
+                          try {
+                            const response = await fetch(`${API_BASE_URL}/api/auth/purchase`, {
+                              method: 'POST',
+                              headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                              },
+                            });
+                            if (response.ok) {
+                              const data = await response.json();
+                              setUser(prev => prev ? { ...prev, ...data, isPremium: true } : null);
+                              alert('Upgrade realizado com sucesso!');
+                            }
+                          } catch (error) {
+                            alert('Erro ao realizar upgrade.');
+                          }
+                        }
+                      }}
+                      className="bg-gradient-to-r from-orange-500 to-orange-600 text-black px-6 py-3 rounded-xl font-bold hover:scale-105 transition-transform"
+                    >
+                      💎 Upgrade para Premium
+                    </button>
+                  </div>
+                )
               )}
 
               {/* Erros Críticos */}
@@ -3398,6 +3678,7 @@ const CS2ProAnalyzerApp = () => {
 
               {/* Classificação por Função */}
               {analysis?.playerRoles && analysis.playerRoles.length > 0 && (
+                user?.isPremium ? (
                 <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
                   <h3 className="text-2xl font-bold text-white mb-6">🎭 Classificação por Função</h3>
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -3454,6 +3735,39 @@ const CS2ProAnalyzerApp = () => {
                     })}
                   </div>
                 </div>
+                ) : (
+                  <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-8 text-center">
+                    <Crown className="w-12 h-12 text-orange-500 mx-auto mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">Classificação por Função Premium</h3>
+                    <p className="text-gray-400 mb-4">A classificação por função está disponível apenas para usuários Premium.</p>
+                    <button
+                      onClick={async () => {
+                        const token = localStorage.getItem('auth_token');
+                        if (token) {
+                          try {
+                            const response = await fetch(`${API_BASE_URL}/api/auth/purchase`, {
+                              method: 'POST',
+                              headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                              },
+                            });
+                            if (response.ok) {
+                              const data = await response.json();
+                              setUser(prev => prev ? { ...prev, ...data, isPremium: true } : null);
+                              alert('Upgrade realizado com sucesso!');
+                            }
+                          } catch (error) {
+                            alert('Erro ao realizar upgrade.');
+                          }
+                        }
+                      }}
+                      className="bg-gradient-to-r from-orange-500 to-orange-600 text-black px-6 py-3 rounded-xl font-bold hover:scale-105 transition-transform"
+                    >
+                      💎 Upgrade para Premium
+                    </button>
+                  </div>
+                )
               )}
 
               {/* Sugestões Inteligentes (IA) */}
@@ -3833,6 +4147,42 @@ const CS2ProAnalyzerApp = () => {
           {/* Tab: Heatmap */}
           {selectedTab === 'heatmap' && (
             <div className="animate-fade-in">
+            {!user?.isPremium ? (
+              <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-12 text-center">
+                <Crown className="w-16 h-16 text-orange-500 mx-auto mb-4" />
+                <h3 className="text-3xl font-bold text-white mb-4">Heatmap Premium</h3>
+                <p className="text-gray-400 mb-6 text-lg">
+                  A visualização de heatmap está disponível apenas para usuários Premium.
+                </p>
+                <button
+                  onClick={async () => {
+                    // Em produção, integrar com gateway de pagamento
+                    const token = localStorage.getItem('auth_token');
+                    if (token) {
+                      try {
+                        const response = await fetch(`${API_BASE_URL}/api/auth/purchase`, {
+                          method: 'POST',
+                          headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                          },
+                        });
+                        if (response.ok) {
+                          const data = await response.json();
+                          setUser(prev => prev ? { ...prev, ...data, isPremium: true } : null);
+                          alert('Upgrade realizado com sucesso! Agora você tem acesso a todas as features premium.');
+                        }
+                      } catch (error) {
+                        alert('Erro ao realizar upgrade. Tente novamente.');
+                      }
+                    }
+                  }}
+                  className="bg-gradient-to-r from-orange-500 to-orange-600 text-black px-8 py-4 rounded-xl font-bold text-lg hover:scale-105 transition-transform"
+                >
+                  💎 Upgrade para Premium - R$ 50 (10 análises)
+                </button>
+              </div>
+            ) : (
             <div className="space-y-8">
               {/* Informações do Mapa */}
               <div className="bg-gray-900 border-2 border-gray-800 rounded-3xl p-8">
@@ -3908,7 +4258,8 @@ const CS2ProAnalyzerApp = () => {
               )}
 
             </div>
-            </div>
+            )}
+          </div>
           )}
 
 
