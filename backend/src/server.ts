@@ -8,12 +8,18 @@ import { v4 as uuid } from 'uuid';
 import { AnalysisType, UploadInfo } from './types';
 import { createAnalysisJob, getJob, getJobStatus } from './jobManager';
 import { generateRushResponse } from './rushCoach';
+import authRoutes from './authRoutes';
+import { authenticateToken, AuthenticatedRequest } from './middleware';
+import { getUser, canUseAnalysis, recordAnalysisUsage } from './auth';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// Rotas de autenticação
+app.use('/api/auth', authRoutes);
 
 const storageRoot = path.resolve(process.cwd(), 'storage');
 const uploadsDir = path.join(storageRoot, 'uploads');
@@ -67,12 +73,13 @@ const upload = multer({
 });
 
 const uploadsStore = new Map<string, UploadInfo>();
+const chatCounts = new Map<string, number>(); // Contador de perguntas por usuário
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.post('/upload', upload.single('demo'), (req: Request, res: Response) => {
+app.post('/upload', authenticateToken, upload.single('demo'), (req: AuthenticatedRequest, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: 'Nenhum arquivo enviado. Certifique-se de usar o campo "demo".' });
   }
@@ -116,11 +123,26 @@ app.post('/upload', upload.single('demo'), (req: Request, res: Response) => {
   });
 });
 
-app.post('/analysis/start', (req: Request, res: Response) => {
+app.post('/analysis/start', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
   const { uploadId, steamId } = req.body as { uploadId?: string; steamId?: string };
 
   if (!uploadId || typeof uploadId !== 'string') {
     return res.status(400).json({ error: 'uploadId é obrigatório.' });
+  }
+
+  if (!req.user) {
+    return res.status(401).json({ error: 'Usuário não autenticado.' });
+  }
+
+  // Verificar se usuário pode usar análise
+  const user = getUser(req.user.steamId);
+  if (!user) {
+    return res.status(404).json({ error: 'Usuário não encontrado.' });
+  }
+
+  const check = canUseAnalysis(user);
+  if (!check.allowed) {
+    return res.status(403).json({ error: check.reason || 'Você não pode usar mais análises.' });
   }
 
   // Steam ID é opcional - se não fornecido, faz análise geral
@@ -131,6 +153,9 @@ app.post('/analysis/start', (req: Request, res: Response) => {
   if (!uploadInfo) {
     return res.status(404).json({ error: 'Upload não encontrado. Reenvie o arquivo.' });
   }
+
+  // Registrar uso da análise
+  recordAnalysisUsage(user);
 
   // Para compatibilidade, ainda usamos 'player' como type, mas agora com steamId
   const job = createAnalysisJob(uploadInfo, 'player', targetSteamId);
@@ -172,7 +197,7 @@ app.get('/analysis/:jobId/result', (req: Request, res: Response) => {
   res.json({ jobId, analysis: job.analysis });
 });
 
-app.post('/chat/rush', (req: Request, res: Response) => {
+app.post('/chat/rush', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
   const { message, uploadId, jobId } = req.body as {
     message?: string;
     uploadId?: string;
@@ -183,9 +208,31 @@ app.post('/chat/rush', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'message é obrigatório.' });
   }
 
+  if (!req.user) {
+    return res.status(401).json({ error: 'Usuário não autenticado.' });
+  }
+
+  // Verificar limite de perguntas para usuários gratuitos
+  const user = getUser(req.user.steamId);
+  if (!user) {
+    return res.status(404).json({ error: 'Usuário não encontrado.' });
+  }
+
+  // Contar perguntas (armazenar em memória - em produção usar Redis/DB)
+  const currentCount = chatCounts.get(req.user.steamId) || 0;
+
+  if (user.plan === 'free' && currentCount >= 2) {
+    return res.status(403).json({ 
+      error: 'Você atingiu o limite de 2 perguntas gratuitas. Faça upgrade para continuar.' 
+    });
+  }
+
   if (!uploadId) {
     return res.json({ reply: '❌ Primeiro envie uma demo pelo botão **UPLOAD** antes de conversar comigo.' });
   }
+
+  // Incrementar contador
+  chatCounts.set(req.user.steamId, currentCount + 1);
 
   const uploadInfo = uploadsStore.get(uploadId);
   const job = jobId ? getJob(jobId) : undefined;
