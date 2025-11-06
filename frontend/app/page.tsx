@@ -336,6 +336,7 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
   const [showKills, setShowKills] = React.useState(true);
   const [showDeaths, setShowDeaths] = React.useState(true);
   const [radarLoaded, setRadarLoaded] = React.useState(false);
+  const [radarReloadKey, setRadarReloadKey] = React.useState(0);
   
   // Gerar heatmaps filtrados baseado no jogador selecionado
   const filteredKillHeatmap = React.useMemo(() => {
@@ -398,62 +399,121 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     });
   }, [playerSteamID, killEvents, deathHeatmap]);
 
-  // Coordenadas de referência para diferentes mapas (baseado em coordenadas reais do CS2)
-  // Esses valores são aproximações baseadas nos bounds dos mapas
-  const mapBounds: Record<string, { minX: number; maxX: number; minY: number; maxY: number; originX: number; originY: number; scale: number }> = {
-    'de_mirage': { minX: -3230, maxX: 1912, minY: -3400, maxY: 1682, originX: -3230, originY: 1682, scale: 1024 },
-    'de_dust2': { minX: -2476, maxX: 2476, minY: -3239, maxY: 3239, originX: -2476, originY: 3239, scale: 1024 },
-    'de_inferno': { minX: -2087, maxX: 2230, minY: -2194, maxY: 2700, originX: -2087, originY: 2700, scale: 1024 },
-    'de_ancient': { minX: -2951, maxX: 2338, minY: -3364, maxY: 1990, originX: -2951, originY: 1990, scale: 1024 },
-    'de_vertigo': { minX: -3168, maxX: 3168, minY: -2304, maxY: 4032, originX: -3168, originY: 4032, scale: 1024 },
-    'de_anubis': { minX: -2856, maxX: 2856, minY: -2856, maxY: 2856, originX: -2856, originY: 2856, scale: 1024 },
-    'de_overpass': { minX: -4831, maxX: 4831, minY: -3071, maxY: 3071, originX: -4831, originY: 3071, scale: 1024 },
-    'de_nuke': { minX: -3456, maxX: 3456, minY: -2496, maxY: 3456, originX: -3456, originY: 3456, scale: 1024 },
+  // Configurações de transformação de coordenadas (world → radar) para cada mapa
+  // Baseado nos valores oficiais do CS2 (de_dust2_radar.txt e JSON de overview)
+  // Cada mapa tem um "overview transform" com OriginX, OriginY e Scale
+  interface MapTransform {
+    originX: number;
+    originY: number;
+    scale: number;
+  }
+
+  const radarTransforms: Record<string, MapTransform> = {
+    'de_dust2': { originX: -2476, originY: 3239, scale: 5.25 },
+    // de_inferno: Valores corrigidos baseados em pesquisa
+    // Valores oficiais do CS2 para de_inferno
+    'de_inferno': { originX: -2087, originY: 3870, scale: 5.15 },
+    'de_mirage': { originX: -3230, originY: 1713, scale: 5.0 },
+    'de_nuke': { originX: -3453, originY: 2887, scale: 7.0 },
+    'de_overpass': { originX: -4831, originY: 1781, scale: 5.2 },
+    'de_vertigo': { originX: -3168, originY: 1762, scale: 5.0 },
+    // Valores padrão para mapas não listados (aproximações)
+    'de_ancient': { originX: -2950, originY: 2168, scale: 5.0 },
+    'de_anubis': { originX: -2856, originY: 2856, scale: 5.0 },
+    'de_train': { originX: -3000, originY: 3000, scale: 5.0 },
+    'de_cache': { originX: -3000, originY: 3000, scale: 5.0 },
   };
 
-  const bounds = mapBounds[mapName] || { minX: -3000, maxX: 3000, minY: -3000, maxY: 3000, originX: -3000, originY: 3000, scale: 1024 };
+  // Configurações de heatmap por mapa (offset e tamanho de visualização)
+  interface HeatmapConfig {
+    offsetX: number;      // Offset X (positivo = direita, negativo = esquerda)
+    offsetY: number;      // Offset Y (positivo = baixo, negativo = cima)
+    blurRadius: number;  // Tamanho do raio de visualização dos pontos
+    zoom: number;         // Zoom da visualização do radar (1.0 = normal, >1.0 = zoom in, <1.0 = zoom out)
+  }
 
-  // Mapeamento de nomes de mapas para arquivos de radar disponíveis no repositório
-  // Baseado em: https://github.com/markus-wa/demoinfocs-golang/tree/master/examples/_assets/radar
-  const mapToRadarFiles: Record<string, string[]> = {
-    'de_mirage': ['de_mirage_radar_psd.png'],
-    'de_dust2': ['de_dust2_radar_psd.png'],
-    'de_inferno': ['de_inferno_radar_psd.png'],
-    'de_ancient': ['de_ancient_radar_psd.png'],
-    'de_vertigo': ['de_vertigo_radar_psd.png'],
-    'de_anubis': ['de_anubis_radar_psd.png'],
-    'de_overpass': ['de_overpass_radar_psd.png'],
-    'de_nuke': ['de_nuke_radar_psd.png'],
-    'de_cache': ['de_cache_radar_psd.png'],
-    'de_train': ['de_train_radar_psd.png'],
-    'de_cbble': ['de_cbble_radar_psd.png'],
-  };
-
-  // Função para normalizar nome do mapa e encontrar arquivo correspondente
-  const findRadarFile = (map: string): string[] => {
-    const normalizedMap = map.toLowerCase().trim();
-    
-    // Tentar encontrar mapeamento direto
-    if (mapToRadarFiles[normalizedMap]) {
-      return mapToRadarFiles[normalizedMap];
+  const heatmapConfigs: Record<string, HeatmapConfig> = {
+    // de_inferno: Configuração ajustada
+    'de_inferno': {
+      offsetX: 60,      // 80px para a direita (40px + 40px)
+      offsetY: -20,     // 20px para cima (negativo porque Y cresce para baixo)
+      blurRadius: 28,   // Raio de 28px
+      zoom: 1.15        // Zoom de 10% (aumenta visualização em 10px equivalente)
+    },
+    // Outros mapas: usar valores padrão (serão ajustados conforme necessário)
+    'de_overpass': {
+      offsetX: 35,
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_dust2': {
+      offsetX: 10,
+      offsetY: -20,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_mirage': {
+      offsetX: 16,      // 16px para a direita (12px + 4px)
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_nuke': {
+      offsetX: 0,
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_vertigo': {
+      offsetX: 0,
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_ancient': {
+      offsetX: 7,
+      offsetY: 25,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_anubis': {
+      offsetX: 0,
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_train': {
+      offsetX: 0,
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
+    },
+    'de_cache': {
+      offsetX: 0,
+      offsetY: 0,
+      blurRadius: 25,
+      zoom: 1.0
     }
-    
-    // Tentar extrair nome base (ex: "de_inferno" -> "inferno")
-    const baseName = normalizedMap.replace(/^de_/, '');
-    
-    // Gerar possíveis nomes de arquivo baseado nos padrões encontrados
-    const possibleNames = [
-      `${normalizedMap}_radar_psd.png`,
-      `de_${baseName}_radar_psd.png`,
-      `${baseName}_radar_psd.png`,
-    ];
-    
-    return possibleNames;
   };
 
-  // Carregar imagem de radar dos assets do demoinfocs-golang (GitHub)
+  // Obter configuração do mapa atual ou usar padrão
+  const heatmapConfig = heatmapConfigs[mapName] || {
+    offsetX: 0,
+    offsetY: 0,
+    blurRadius: 25,
+    zoom: 1.0
+  };
+
+  const transform = radarTransforms[mapName] || { originX: -3000, originY: 3000, scale: 5.0 };
+  
+  // Debug: Log da transformação usada
+  console.log(`[HEATMAP] Map: ${mapName}, Transform:`, transform);
+  console.log(`[HEATMAP] Kill points: ${killHeatmap?.length || 0}, Death points: ${deathHeatmap?.length || 0}`);
+
+  // Carregar imagem de radar APENAS da pasta local
   React.useEffect(() => {
-    // Resetar estado ao mudar o mapa
+    // Resetar estado ao mudar o mapa ou forçar reload
     setRadarLoaded(false);
     radarImageRef.current = null;
     
@@ -462,87 +522,66 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
       return;
     }
     
-    console.log('🔍 Tentando carregar radar para mapa:', mapName);
+    console.log('🔍 Carregando radar da pasta local para mapa:', mapName);
     
-    // Encontrar possíveis nomes de arquivo
-    const possibleFileNames = findRadarFile(mapName);
-    console.log('📋 Possíveis arquivos:', possibleFileNames);
-    
-    const baseUrl = 'https://raw.githubusercontent.com/markus-wa/demoinfocs-golang/master/examples/_assets/radar/';
-    
-    let currentIndex = 0;
     const img = new Image();
-    
-    // Tentar sem CORS primeiro (pode funcionar para GitHub raw)
-    // Se precisar, mudaremos para 'anonymous' depois
     img.crossOrigin = null;
     
-    const tryNextFile = () => {
-      if (currentIndex >= possibleFileNames.length) {
-        // Todas as tentativas falharam
-        console.warn(`❌ Não foi possível carregar radar para ${mapName}. Tentativas:`, possibleFileNames);
-        
-        // Fallback: tentar saiko.tech
-        console.log('🔄 Tentando fallback saiko.tech...');
-        const fallbackUrl = `https://radar-overviews.csgo.saiko.tech/${mapName}/radar.png`;
-        const fallbackImg = new Image();
-        fallbackImg.crossOrigin = 'anonymous';
-        
-        fallbackImg.onload = () => {
-          console.log('✅ Radar carregado do saiko.tech:', mapName);
-          radarImageRef.current = fallbackImg;
-          setRadarLoaded(true);
-        };
-        
-        fallbackImg.onerror = () => {
-          console.warn(`❌ Fallback saiko.tech também falhou para ${mapName}`);
-        };
-        
-        fallbackImg.src = fallbackUrl;
-        return;
-      }
-      
-      const fileName = possibleFileNames[currentIndex];
-      const radarUrl = `${baseUrl}${fileName}`;
-      console.log(`🔄 Tentativa ${currentIndex + 1}/${possibleFileNames.length}: ${radarUrl}`);
-      
-      img.onload = () => {
-        console.log(`✅ Radar carregado com sucesso: ${fileName} para mapa ${mapName}`);
-        radarImageRef.current = img;
-        setRadarLoaded(true);
-      };
-      
-      img.onerror = (e) => {
-        console.warn(`⚠️ Falha ao carregar: ${radarUrl}`);
-        currentIndex++;
-        tryNextFile();
-      };
-      
-      img.src = radarUrl;
+    // Buscar APENAS da pasta local com timestamp para evitar cache
+    // O timestamp força o navegador a recarregar a imagem sempre que necessário
+    const timestamp = Date.now();
+    const localUrl = `http://localhost:4000/api/maps/${mapName}?t=${timestamp}&reload=${radarReloadKey}`;
+    
+    img.onload = () => {
+      console.log(`✅ Radar carregado da pasta local: ${mapName}`);
+      radarImageRef.current = img;
+      setRadarLoaded(true);
     };
     
-    tryNextFile();
-  }, [mapName]);
+    img.onerror = () => {
+      console.error(`❌ Falha ao carregar mapa da pasta local: ${mapName}`);
+      console.error(`   Verifique se o arquivo existe em: D:\\cs2curss\\CS2-PRO\\mapas\\`);
+      console.error(`   Nomes aceitos: ${mapName}.png, ${mapName}.jpg, ${mapName}_radar_psd.png, etc.`);
+    };
+    
+    img.src = localUrl;
+  }, [mapName, radarReloadKey]);
 
-  // Função para converter coordenadas 3D do CS2 para 2D do canvas
-  // Baseado no sistema de coordenadas do Source Engine: X=leste/oeste, Y=norte/sul, Z=altura
-  // Os radares do CS2 geralmente têm o norte no topo e oeste à esquerda
+  // Função para converter coordenadas do mundo 3D CS2 para coordenadas do radar 2D
+  // Baseado na fórmula correta: WorldToMap(x, y, transform)
+  // mapX = (x - OriginX) / Scale
+  // mapY = (OriginY - y) / Scale  // Note o sinal invertido no Y
+  // O radar CS2 tem 1024x1024 pixels, com origem no centro (512, 512)
+  // Os valores mapX e mapY retornados são relativos ao centro (-512 a +512)
+  const worldToMap = (x: number, y: number, t: MapTransform): { mapX: number; mapY: number } => {
+    const mapX = (x - t.originX) / t.scale;
+    const mapY = (t.originY - y) / t.scale; // Y invertido
+    return { mapX, mapY };
+  };
+
+  // Offset dinâmico calculado baseado nos dados (usando ref para evitar re-renders)
+  const dynamicOffsetRef = React.useRef({ x: 512, y: 512 });
+  
+  // Função para converter coordenadas do mapa para coordenadas do canvas
+  // O radar CS2 tem tamanho padrão de 1024x1024 pixels
+  // A conversão WorldToMap retorna coordenadas do radar
+  // Usamos offset dinâmico calculado baseado nos dados reais
   const worldToCanvas = (x: number, y: number, width: number, height: number) => {
-    const originX = bounds.originX || bounds.minX;
-    const originY = bounds.originY || bounds.maxY;
+    // Converter coordenadas do mundo para coordenadas do mapa
+    const { mapX, mapY } = worldToMap(x, y, transform);
     
-    // Normalizar coordenadas: converter de coordenadas do mundo para 0-1
-    // Usar coordenadas ORIGINAIS (X e Y) sem trocar, como vem do GitHub radar
-    // X: leste (positivo) = direita no radar
-    const normalizedX = (x - originX) / (bounds.maxX - bounds.minX);
+    // Usar offset dinâmico calculado baseado nos dados
+    let radarX = mapX + dynamicOffsetRef.current.x;
+    let radarY = mapY + dynamicOffsetRef.current.y;
     
-    // Y: norte (positivo em CS2) = topo no radar (precisa inverter porque canvas Y cresce para baixo)
-    const normalizedY = (originY - y) / (bounds.maxY - bounds.minY);
+    // Escalar para o tamanho do canvas (1024x1024 → width x height)
+    let canvasX = (radarX / 1024) * width;
+    let canvasY = (radarY / 1024) * height;
     
-    // Retornar coordenadas do canvas (0,0 = topo esquerdo)
+    // Garantir que fique dentro dos bounds do canvas
     return {
-      x: normalizedX * width,
-      y: normalizedY * height,
+      x: Math.max(0, Math.min(width, canvasX)),
+      y: Math.max(0, Math.min(height, canvasY)),
     };
   };
 
@@ -555,6 +594,17 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
 
     const width = canvas.width = 1024; // Tamanho padrão dos radares CS2
     const height = canvas.height = 1024;
+    
+    // Debug: Log dos dados recebidos
+    console.log(`[HEATMAP RENDER] Map: ${mapName}, Transform:`, transform);
+    console.log(`[HEATMAP RENDER] Kill heatmap points: ${killHeatmap?.length || 0}`);
+    console.log(`[HEATMAP RENDER] Death heatmap points: ${deathHeatmap?.length || 0}`);
+    if (killHeatmap && killHeatmap.length > 0) {
+      console.log(`[HEATMAP RENDER] Sample kill point:`, killHeatmap[0]);
+    }
+    if (deathHeatmap && deathHeatmap.length > 0) {
+      console.log(`[HEATMAP RENDER] Sample death point:`, deathHeatmap[0]);
+    }
 
     // Limpar canvas
     ctx.fillStyle = '#1a1a1a';
@@ -563,9 +613,26 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     // Desenhar imagem de radar de fundo se disponível
     if (radarImageRef.current && radarLoaded) {
       try {
-        // Desenhar a imagem completa no canvas
-        ctx.drawImage(radarImageRef.current, 0, 0, width, height);
-        console.log('✅ Imagem de radar desenhada no canvas');
+        // Aplicar zoom se configurado (zoom > 1.0 = zoom in, aumenta visualização)
+        const zoom = heatmapConfig.zoom || 1.0;
+        if (zoom !== 1.0 && zoom > 1.0) {
+          // Para zoom in, desenhar uma porção menor da imagem escalada para o tamanho do canvas
+          // Isso cria o efeito de zoom (mostra menos área, mas ampliada)
+          const sourceWidth = radarImageRef.current.width / zoom;
+          const sourceHeight = radarImageRef.current.height / zoom;
+          const sourceX = (radarImageRef.current.width - sourceWidth) / 2;
+          const sourceY = (radarImageRef.current.height - sourceHeight) / 2;
+          ctx.drawImage(
+            radarImageRef.current,
+            sourceX, sourceY, sourceWidth, sourceHeight,  // Área da imagem original
+            0, 0, width, height  // Área no canvas
+          );
+          console.log(`✅ Imagem de radar desenhada no canvas com zoom ${zoom}`);
+        } else {
+          // Desenhar a imagem completa no canvas
+          ctx.drawImage(radarImageRef.current, 0, 0, width, height);
+          console.log('✅ Imagem de radar desenhada no canvas');
+        }
       } catch (error) {
         console.error('❌ Erro ao desenhar imagem de radar:', error);
         // Fallback para grid
@@ -618,26 +685,110 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     tempCtx.fillRect(0, 0, width, height);
     
     // Usar heatmaps filtrados se houver filtro de jogador
-    const displayKillHeatmap = filteredKillHeatmap;
-    const displayDeathHeatmap = filteredDeathHeatmap;
+    const displayKillHeatmap = filteredKillHeatmap || [];
+    const displayDeathHeatmap = filteredDeathHeatmap || [];
+    
+    // Debug: Log dos heatmaps que serão desenhados e verificar coordenadas
+    if (displayKillHeatmap.length === 0 && displayDeathHeatmap.length === 0) {
+      console.warn('[HEATMAP RENDER] ⚠️ Nenhum ponto de heatmap para desenhar!');
+      console.warn('[HEATMAP RENDER] KillHeatmap recebido:', killHeatmap?.length || 0, 'pontos');
+      console.warn('[HEATMAP RENDER] DeathHeatmap recebido:', deathHeatmap?.length || 0, 'pontos');
+    }
+    
+    // Calcular offset dinâmico baseado em TODOS os dados (não filtrados)
+    // IMPORTANTE: Usar killHeatmap e deathHeatmap originais, não os filtrados!
+    // Isso garante que o offset seja consistente mesmo quando há filtro de jogador
+    let calculatedOffset = { x: 512, y: 512 };
+    
+    // Usar TODOS os dados (não filtrados) para calcular o offset base
+    const allUnfilteredPoints = [...(killHeatmap || []), ...(deathHeatmap || [])];
+    
+    if (allUnfilteredPoints.length > 0) {
+      const allCoords = allUnfilteredPoints.map(p => worldToMap(p.x, p.y, transform));
+      
+      const minX = Math.min(...allCoords.map(c => c.mapX));
+      const maxX = Math.max(...allCoords.map(c => c.mapX));
+      const minY = Math.min(...allCoords.map(c => c.mapY));
+      const maxY = Math.max(...allCoords.map(c => c.mapY));
+      
+      console.log(`[HEATMAP DEBUG] Range de coordenadas Map (TODOS os dados): X[${minX.toFixed(1)}, ${maxX.toFixed(1)}], Y[${minY.toFixed(1)}, ${maxY.toFixed(1)}]`);
+      
+      // Calcular offset necessário para alinhar os dados com o radar (1024x1024)
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const rangeX = maxX - minX;
+      const rangeY = maxY - minY;
+      
+      // Estratégia de alinhamento melhorada:
+      // 1. Se o range é menor que 1024, centralizar normalmente
+      // 2. Se o range é maior, ajustar para que o mínimo fique próximo de 0
+      let baseOffsetX = 512 - centerX;
+      let baseOffsetY = 512 - centerY;
+      
+      // Se o range é muito grande, pode ser melhor alinhar pelo mínimo
+      if (rangeX > 1024) {
+        // Alinhar mínimo próximo de 0, mas ainda considerar o centro
+        baseOffsetX = (0 - minX) * 0.7 + (512 - centerX) * 0.3;
+      }
+      if (rangeY > 1024) {
+        baseOffsetY = (0 - minY) * 0.7 + (512 - centerY) * 0.3;
+      }
+      
+      calculatedOffset = { x: baseOffsetX, y: baseOffsetY };
+      
+      // Aplicar configuração específica do mapa (offset X e Y)
+      calculatedOffset.x += heatmapConfig.offsetX;
+      calculatedOffset.y += heatmapConfig.offsetY; // Y já está correto (negativo = cima)
+      console.log(`[HEATMAP DEBUG] Configuração do mapa aplicada: offsetX=${heatmapConfig.offsetX}, offsetY=${heatmapConfig.offsetY}`);
+      
+      // Atualizar ref para uso em outras chamadas
+      dynamicOffsetRef.current = calculatedOffset;
+      console.log(`[HEATMAP DEBUG] Offset final (baseado em TODOS os dados): (${calculatedOffset.x.toFixed(1)}, ${calculatedOffset.y.toFixed(1)})`);
+      console.log(`[HEATMAP DEBUG] Range: X=${rangeX.toFixed(1)}, Y=${rangeY.toFixed(1)}`);
+      
+      if (rangeX > 1024 || rangeY > 1024) {
+        console.warn(`[HEATMAP DEBUG] ⚠️ Range muito grande! Pode ser que os valores de transform estejam errados.`);
+      }
+    } else {
+      // Se não houver dados, usar offset padrão + configuração do mapa
+      calculatedOffset.x = 512 + heatmapConfig.offsetX;
+      calculatedOffset.y = 512 + heatmapConfig.offsetY;
+      dynamicOffsetRef.current = calculatedOffset;
+    }
+    
+    // Criar função worldToCanvas local que usa o offset calculado
+    const worldToCanvasLocal = (x: number, y: number, w: number, h: number) => {
+      const { mapX, mapY } = worldToMap(x, y, transform);
+      const radarX = mapX + calculatedOffset.x;
+      const radarY = mapY + calculatedOffset.y;
+      const canvasX = (radarX / 1024) * w;
+      const canvasY = (radarY / 1024) * h;
+      return {
+        x: Math.max(0, Math.min(w, canvasX)),
+        y: Math.max(0, Math.min(h, canvasY)),
+      };
+    };
     
     // Calcular máximos para normalização
     let maxKills = 0;
     let maxDeaths = 0;
     if (showKills && displayKillHeatmap.length > 0) {
       maxKills = Math.max(...displayKillHeatmap.map(p => p.count));
+      console.log(`[HEATMAP RENDER] Max kills: ${maxKills}, Total kill points: ${displayKillHeatmap.length}`);
     }
     if (showDeaths && displayDeathHeatmap.length > 0) {
       maxDeaths = Math.max(...displayDeathHeatmap.map(p => p.count));
+      console.log(`[HEATMAP RENDER] Max deaths: ${maxDeaths}, Total death points: ${displayDeathHeatmap.length}`);
     }
     
-    const blurRadius = 25; // Raio menor para heatmap mais compacto e preciso
+    // Usar blurRadius da configuração do mapa
+    const blurRadius = heatmapConfig.blurRadius;
     const intensityMultiplier = 1.2; // Multiplicador de intensidade reduzido
     
     // Desenhar kills (verde) com gradiente radial suave
     if (showKills && maxKills > 0) {
       displayKillHeatmap.forEach(point => {
-        const pos = worldToCanvas(point.x, point.y, width, height);
+        const pos = worldToCanvasLocal(point.x, point.y, width, height);
         const intensity = Math.min(point.count / maxKills, 1) * intensityMultiplier;
         
         // Criar gradiente radial para cada ponto
@@ -660,7 +811,7 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     // Desenhar deaths (vermelho) com gradiente radial suave
     if (showDeaths && maxDeaths > 0) {
       displayDeathHeatmap.forEach(point => {
-        const pos = worldToCanvas(point.x, point.y, width, height);
+        const pos = worldToCanvasLocal(point.x, point.y, width, height);
         const intensity = Math.min(point.count / maxDeaths, 1) * intensityMultiplier;
         
         // Criar gradiente radial para cada ponto
@@ -690,7 +841,7 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     // Isso cria áreas mais intensas onde há sobreposição de pontos
     if (showKills && maxKills > 0) {
       displayKillHeatmap.forEach(point => {
-        const pos = worldToCanvas(point.x, point.y, width, height);
+        const pos = worldToCanvasLocal(point.x, point.y, width, height);
         const intensity = Math.min(point.count / maxKills, 1);
         
         // Adicionar ponto central mais intenso para áreas de alta atividade
@@ -708,7 +859,7 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
     
     if (showDeaths && maxDeaths > 0) {
       displayDeathHeatmap.forEach(point => {
-        const pos = worldToCanvas(point.x, point.y, width, height);
+        const pos = worldToCanvasLocal(point.x, point.y, width, height);
         const intensity = Math.min(point.count / maxDeaths, 1);
         
         // Adicionar ponto central mais intenso para áreas de alta atividade
@@ -724,7 +875,7 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
       });
     }
 
-  }, [filteredKillHeatmap, filteredDeathHeatmap, showKills, showDeaths, mapName, radarLoaded]);
+  }, [filteredKillHeatmap, filteredDeathHeatmap, showKills, showDeaths, mapName, radarLoaded, transform]);
 
   return (
     <div className="space-y-4">
@@ -784,7 +935,16 @@ const Heatmap2DViewer: React.FC<Heatmap2DViewerProps> = ({ mapName, killHeatmap,
           <br />
           Mapa: <span className="text-white font-semibold">{mapName}</span>
           {radarLoaded && (
-            <span className="ml-2 text-green-400">✓ Radar carregado</span>
+            <>
+              <span className="ml-2 text-green-400">✓ Radar carregado</span>
+              <button
+                onClick={() => setRadarReloadKey(prev => prev + 1)}
+                className="ml-3 px-2 py-1 text-xs bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 rounded text-orange-300 transition-colors"
+                title="Recarregar radar (útil após editar a imagem)"
+              >
+                🔄 Recarregar
+              </button>
+            </>
           )}
           {!radarLoaded && mapName !== 'unknown' && (
             <span className="ml-2 text-yellow-400">⚠ Carregando radar...</span>
@@ -1283,7 +1443,7 @@ const CS2ProAnalyzerApp = () => {
           {/* Hero Content */}
           <div className="relative z-10 max-w-6xl mx-auto px-6 flex flex-col items-center justify-center h-[calc(100vh-100px)]">
             <div className="text-center animate-scale-in">
-              <div className="inline-flex items-center gap-2 bg-red-500/20 border-2 border-red-500 rounded-full px-6 py-2 mb-8 animate-pulse">
+              <div className="inline-flex items-center gap-2 bg-red-500/20 border-2 border-red-500 rounded-full px-6 py-2 mb-8 animate-blink">
                 <AlertCircle className="w-5 h-5 text-red-400" />
                 <span className="text-red-400 font-black text-sm tracking-wider">⚠️ PARE DE JOGAR NO ESCURO</span>
               </div>
@@ -1326,13 +1486,6 @@ const CS2ProAnalyzerApp = () => {
                   <p className="text-gray-300 font-bold text-lg">{stat.label}</p>
                 </div>
               ))}
-            </div>
-          </div>
-
-          {/* Scroll Indicator */}
-          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 animate-bounce">
-            <div className="w-6 h-10 border-2 border-orange-500 rounded-full flex justify-center p-2">
-              <div className="w-1 h-3 bg-orange-500 rounded-full animate-pulse"></div>
             </div>
           </div>
         </div>
@@ -2491,7 +2644,18 @@ const CS2ProAnalyzerApp = () => {
                             </div>
                             <div>
                               <p className="text-gray-400">HS%</p>
-                              <p className="text-2xl font-bold text-cyan-400">{(player.hsRate ? (player.hsRate * 100).toFixed(1) : '0.0')}%</p>
+                              <p className="text-2xl font-bold text-cyan-400">
+                                {(() => {
+                                  if (player.hsRate === undefined || player.hsRate === null) return '0.0';
+                                  let hsValue = player.hsRate; // hsRate já está em formato de porcentagem (64.706 = 64.7%)
+                                  // Se o valor for maior que 100, pegar apenas os 2 primeiros dígitos
+                                  if (hsValue >= 100) {
+                                    // Dividir por 100 para pegar apenas os 2 primeiros dígitos (64.7% ao invés de 6470.6%)
+                                    hsValue = Math.floor(hsValue / 100 * 10) / 10;
+                                  }
+                                  return hsValue.toFixed(1);
+                                })()}%
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -2519,9 +2683,25 @@ const CS2ProAnalyzerApp = () => {
                             .filter(Boolean);
                           
                           const maxValue = Math.max(...selectedPlayersData.map(p => {
+                            if (!p) return 0;
                             let value = 0;
                             if (stat === 'headshotRate') {
-                              value = ((p as any).headshotKills || (p as any).headshots || 0) / ((p as any).kills || 1) * 100;
+                              // Usar hsRate diretamente se disponível, senão calcular
+                              let rawValue = 0;
+                              if (p.hsRate !== undefined && p.hsRate !== null) {
+                                rawValue = p.hsRate; // hsRate já está em formato de porcentagem (64.706 = 64.7%)
+                                // Se o valor for maior que 100, pegar apenas os 2 primeiros dígitos
+                                if (rawValue >= 100) {
+                                  rawValue = Math.floor(rawValue / 100 * 10) / 10;
+                                }
+                              } else {
+                                // Fallback: calcular se não tiver hsRate
+                                rawValue = ((p as any).headshotKills || (p as any).headshots || 0) / ((p as any).kills || 1) * 100;
+                                if (rawValue >= 100) {
+                                  rawValue = Math.floor(rawValue / 100 * 10) / 10;
+                                }
+                              }
+                              value = rawValue;
                             } else {
                               value = (p as any)[stat] || 0;
                             }
@@ -2536,9 +2716,25 @@ const CS2ProAnalyzerApp = () => {
                               </div>
                               <div className="space-y-2">
                                 {selectedPlayersData.map((player) => {
+                                  if (!player) return null;
                                   let value = 0;
                                   if (stat === 'headshotRate') {
-                                    value = ((player as any).headshotKills || (player as any).headshots || 0) / ((player as any).kills || 1) * 100;
+                                    // Usar hsRate diretamente se disponível, senão calcular
+                                    let rawValue = 0;
+                                    if (player.hsRate !== undefined && player.hsRate !== null) {
+                                      rawValue = player.hsRate; // hsRate já está em formato de porcentagem (64.706 = 64.7%)
+                                      // Se o valor for maior que 100, pegar apenas os 2 primeiros dígitos
+                                      if (rawValue >= 100) {
+                                        rawValue = Math.floor(rawValue / 100 * 10) / 10;
+                                      }
+                                    } else {
+                                      // Fallback: calcular se não tiver hsRate
+                                      rawValue = ((player as any).headshotKills || (player as any).headshots || 0) / ((player as any).kills || 1) * 100;
+                                      if (rawValue >= 100) {
+                                        rawValue = Math.floor(rawValue / 100 * 10) / 10;
+                                      }
+                                    }
+                                    value = rawValue;
                                   } else {
                                     value = (player as any)[stat] || 0;
                                   }

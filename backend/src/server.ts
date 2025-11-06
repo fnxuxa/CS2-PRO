@@ -17,9 +17,29 @@ app.use(express.json({ limit: '10mb' }));
 
 const storageRoot = path.resolve(process.cwd(), 'storage');
 const uploadsDir = path.join(storageRoot, 'uploads');
+// Usar caminho absoluto direto para Windows
+const mapsDir = 'D:\\cs2curss\\CS2-PRO\\mapas';
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Verificar se a pasta de mapas existe
+if (!fs.existsSync(mapsDir)) {
+  console.warn(`⚠️ Pasta de mapas não encontrada: ${mapsDir}`);
+  console.warn(`   Certifique-se de que a pasta existe e contém os arquivos de mapa.`);
+} else {
+  console.log(`✅ Pasta de mapas encontrada: ${mapsDir}`);
+  // Listar arquivos na pasta para debug
+  try {
+    const files = fs.readdirSync(mapsDir);
+    console.log(`   Arquivos encontrados: ${files.length}`);
+    if (files.length > 0) {
+      console.log(`   Primeiros arquivos: ${files.slice(0, 5).join(', ')}`);
+    }
+  } catch (err) {
+    console.error(`   Erro ao ler pasta:`, err);
+  }
 }
 
 const storage = multer.diskStorage({
@@ -172,6 +192,78 @@ app.post('/chat/rush', (req: Request, res: Response) => {
 
   const reply = generateRushResponse({ message, upload: uploadInfo, job });
   res.json({ reply });
+});
+
+// Rota para servir arquivos de mapa da pasta local
+app.get('/api/maps/:mapName', (req: Request, res: Response) => {
+  // Decodificar o nome do mapa (pode vir codificado na URL)
+  const mapNameRaw = decodeURIComponent(req.params.mapName);
+  const normalizedMap = mapNameRaw.toLowerCase().trim();
+  
+  console.log(`🔍 Buscando mapa: "${mapNameRaw}" (normalizado: "${normalizedMap}")`);
+  console.log(`📁 Pasta de mapas: ${mapsDir}`);
+  
+  // Garantir que o nome comece com 'de_' se não começar
+  const mapNameWithPrefix = normalizedMap.startsWith('de_') ? normalizedMap : `de_${normalizedMap}`;
+  const mapNameWithoutPrefix = normalizedMap.replace(/^de_/, '');
+  
+  // Possíveis nomes de arquivo (priorizando o padrão exato: de_{mapa}_radar_psd.png)
+  const possibleFileNames = [
+    `${mapNameWithPrefix}_radar_psd.png`, // Padrão principal: de_dust2_radar_psd.png
+    `${normalizedMap}_radar_psd.png`,      // Se já vier com de_: de_dust2_radar_psd.png
+    `${mapNameWithoutPrefix}_radar_psd.png`, // Se vier sem de_: dust2_radar_psd.png
+    `${mapNameWithPrefix}.png`,
+    `${mapNameWithPrefix}.jpg`,
+    `${normalizedMap}.png`,
+    `${normalizedMap}.jpg`,
+    `${normalizedMap}_radar.png`,
+    `de_${mapNameWithoutPrefix}_radar.png`,
+    `${mapNameWithoutPrefix}_radar.png`,
+  ];
+  
+  console.log(`📋 Tentativas de busca:`, possibleFileNames);
+  
+  // Tentar encontrar o arquivo
+  for (const fileName of possibleFileNames) {
+    const filePath = path.join(mapsDir, fileName);
+    console.log(`   🔎 Tentando: ${filePath}`);
+    
+    if (fs.existsSync(filePath)) {
+      console.log(`   ✅ Arquivo encontrado: ${filePath}`);
+      // Verificar extensão para definir Content-Type
+      const ext = path.extname(fileName).toLowerCase();
+      const contentType = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+      
+      res.setHeader('Content-Type', contentType);
+      // Desabilitar cache durante desenvolvimento para permitir atualizações imediatas
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      return res.sendFile(filePath);
+    }
+  }
+  
+  // Arquivo não encontrado - listar arquivos na pasta para debug
+  console.error(`❌ Mapa não encontrado: ${mapNameRaw}`);
+  console.error(`   Tentativas: ${possibleFileNames.join(', ')}`);
+  console.error(`   Pasta: ${mapsDir}`);
+  
+  try {
+    if (fs.existsSync(mapsDir)) {
+      const files = fs.readdirSync(mapsDir);
+      console.error(`   Arquivos na pasta (${files.length}):`, files.slice(0, 10).join(', '));
+    } else {
+      console.error(`   ⚠️ Pasta não existe: ${mapsDir}`);
+    }
+  } catch (err) {
+    console.error(`   Erro ao ler pasta:`, err);
+  }
+  
+  res.status(404).json({ 
+    error: `Mapa não encontrado: ${mapNameRaw}`,
+    attempts: possibleFileNames,
+    mapsDir: mapsDir
+  });
 });
 
 // Handler de erros do multer (tamanho de arquivo, tipo, etc.)

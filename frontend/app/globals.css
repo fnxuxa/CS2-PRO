@@ -130,6 +130,16 @@ body {
   }
 }
 
+/* Blink Animation */
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 /* ==================== UTILITY CLASSES ==================== */
 
 .animate-fade-in {
@@ -263,6 +273,12 @@ body {
 .card-hover:hover {
   transform: translateY(-4px);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* Blink Animation Class */
+.animate-blink {
+  animation: blink 3s ease-in-out infinite !important;
+  will-change: opacity;
 }
 
 /* Mobile Optimizations */

@@ -1519,10 +1519,38 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
   // Radar moments removidos - replay de demo foi desabilitado
 
   // Processar heatmap de kills e deaths
+  // Usar o heatmap do Go (que tem TODOS os eventos) E também complementar com eventos de kill
   const killHeatmapMap = new Map<string, { x: number; y: number; z: number; count: number }>();
   const deathHeatmapMap = new Map<string, { x: number; y: number; z: number; count: number }>();
 
-  // Processar eventos de kill para criar heatmap
+  // PRIMEIRO: Processar heatmap do Go (vem do processor, tem TODOS os eventos processados)
+  if (heatmap && heatmap.points && heatmap.points.length > 0) {
+    heatmap.points.forEach(point => {
+      // Agrupar por coordenadas aproximadas (precisão de 50 unidades)
+      const keyX = Math.round(point.x / 50) * 50;
+      const keyY = Math.round(point.y / 50) * 50;
+      const keyZ = Math.round((point.z || 0) / 50) * 50;
+      const key = `${keyX},${keyY},${keyZ}`;
+
+      if (point.type === 'kill') {
+        const existing = killHeatmapMap.get(key);
+        if (existing) {
+          existing.count += point.intensity;
+        } else {
+          killHeatmapMap.set(key, { x: keyX, y: keyY, z: keyZ, count: point.intensity });
+        }
+      } else if (point.type === 'death') {
+        const existing = deathHeatmapMap.get(key);
+        if (existing) {
+          existing.count += point.intensity;
+        } else {
+          deathHeatmapMap.set(key, { x: keyX, y: keyY, z: keyZ, count: point.intensity });
+        }
+      }
+    });
+  }
+
+  // SEGUNDO: Complementar com eventos de kill dos rounds oficiais (para garantir que não perdemos nada)
   last20Events.forEach(event => {
     if (event.type === 'kill' && event.data) {
       const killerPos = event.data.killer?.position;
@@ -1530,7 +1558,6 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
 
       // Heatmap de kills (verde)
       if (killerPos && killerPos.x !== undefined && killerPos.y !== undefined) {
-        // Agrupar por coordenadas aproximadas (precisão de 50 unidades)
         const keyX = Math.round(killerPos.x / 50) * 50;
         const keyY = Math.round(killerPos.y / 50) * 50;
         const keyZ = Math.round((killerPos.z || 0) / 50) * 50;
@@ -1546,7 +1573,6 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
 
       // Heatmap de deaths (vermelho)
       if (victimPos && victimPos.x !== undefined && victimPos.y !== undefined) {
-        // Agrupar por coordenadas aproximadas (precisão de 50 unidades)
         const keyX = Math.round(victimPos.x / 50) * 50;
         const keyY = Math.round(victimPos.y / 50) * 50;
         const keyZ = Math.round((victimPos.z || 0) / 50) * 50;
@@ -1564,6 +1590,15 @@ export const convertGoDataToAnalysisData = (goData: GoAnalysis, type: AnalysisTy
 
   const killHeatmap = Array.from(killHeatmapMap.values());
   const deathHeatmap = Array.from(deathHeatmapMap.values());
+  
+  // Debug: Log do heatmap gerado
+  console.log(`[HEATMAP] Kill points: ${killHeatmap.length}, Death points: ${deathHeatmap.length}`);
+  if (killHeatmap.length > 0) {
+    console.log(`[HEATMAP] Sample kill point:`, killHeatmap[0]);
+  }
+  if (deathHeatmap.length > 0) {
+    console.log(`[HEATMAP] Sample death point:`, deathHeatmap[0]);
+  }
 
   // Criar lista de eventos de kill com posições para filtro no frontend
   const killEventsWithPositions = last20Events
