@@ -1454,7 +1454,7 @@ const CS2ProAnalyzerApp = () => {
               </h2>
               
               <p className="text-2xl md:text-3xl text-gray-200 mb-10 max-w-4xl mx-auto drop-shadow-lg font-medium">
-                Enquanto você joga no <span className="line-through text-gray-500">feeling</span>, seus adversários usam 
+                Enquanto você joga no <span className="line-through text-red-500">feeling</span>, seus adversários usam 
                 <span className="text-orange-500 font-black"> IA profissional</span> para dominar
               </p>
               
@@ -1572,7 +1572,7 @@ const CS2ProAnalyzerApp = () => {
               <Crown className="relative z-10 w-28 h-28 text-orange-500 mx-auto mb-10 animate-bounce" />
               <h3 className="relative z-10 text-6xl font-black text-white mb-8">CS2 PRO: A Única com IA Real</h3>
               <p className="relative z-10 text-2xl text-gray-200 mb-10 max-w-3xl mx-auto font-medium leading-relaxed">
-                Upload → Escolha Análise (Player/Team) → IA Processa → Chat Ilimitado para Dúvidas
+                Upload → Análise (Player/Team) → IA Processa → Chat para Dúvidas
               </p>
               <button 
                 onClick={() => setCurrentPage('upload-area')}
@@ -1593,8 +1593,8 @@ const CS2ProAnalyzerApp = () => {
             <div className="grid md:grid-cols-3 gap-12">
               {[
                 { icon: Upload, title: 'Upload Instantâneo', desc: 'Arraste sua .dem e pronto. Processa em menos de 30 segundos.', delay: '0s' },
-                { icon: Target, title: 'Escolha: Player ou Team', desc: 'Análise individual profunda OU estratégia de time completa.', delay: '0.15s' },
-                { icon: MessageSquare, title: 'Chat IA Ilimitado', desc: 'Pergunte qualquer coisa. A IA responde como um coach profissional.', delay: '0.3s' }
+                { icon: Target, title: 'Análise Profunda', desc: 'Uma Análise completa estratégica de time completa ou filtrada por jogador.', delay: '0.15s' },
+                { icon: MessageSquare, title: 'Chat IA Coach', desc: 'Pergunte qualquer coisa sobre sua partida. A IA responde como um coach profissional, nosso mascote RUSH tem as respostas para suas dúvidas.', delay: '0.3s' }
               ].map((feature, i) => (
                 <div key={i} className="group bg-black border-2 border-gray-800 hover:border-orange-500 rounded-3xl p-12 transition-all duration-300 hover:scale-110 hover:-translate-y-3 animate-scale-in shadow-xl hover:shadow-orange-500/30" style={{ animationDelay: feature.delay }}>
                   <div className="w-24 h-24 bg-gradient-to-br from-orange-500 to-orange-600 rounded-3xl flex items-center justify-center mb-10 group-hover:scale-110 group-hover:rotate-6 transition-all duration-300 shadow-xl shadow-orange-500/50">
