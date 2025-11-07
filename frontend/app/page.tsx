@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Upload, User, Users, MessageSquare, Check, Loader2, TrendingUp, Target, Award, Zap, AlertCircle, ArrowRight, Star, Crown, Sparkles, Send, Flame, Compass, BarChart3, Crosshair, Shield, Skull, TrendingDown, Play, Pause, SkipForward, SkipBack, LogOut } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -36,7 +36,7 @@ interface RadarPlayer {
 }
 
 interface RadarEvent {
-  type: 'kill' | 'bomb_planted' | 'bomb_defused';
+  type: 'kill' | 'bomb_planted' | 'bomb_defused' | 'bomb_exploded';
   x: number;
   y: number;
   player?: string;
@@ -527,21 +527,20 @@ const heatmapConfigs: Record<string, HeatmapConfig> = {
     // Buscar APENAS da pasta local com timestamp para evitar cache
     // O timestamp força o navegador a recarregar a imagem sempre que necessário
     const timestamp = Date.now();
+    // Usar mapas do repositório GitHub
+    const githubUrl = `https://raw.githubusercontent.com/fnxuxa/CS2-PRO/main/mapas/${mapName}.png`;
     const localUrl = `http://localhost:4000/api/maps/${mapName}?t=${timestamp}&reload=${radarReloadKey}`;
-    
+    // Tentar carregar do GitHub primeiro, fallback para local
+    img.src = githubUrl;
+    img.onerror = () => {
+      // Fallback para local se GitHub falhar
+      console.warn(`[Heatmap] Erro ao carregar mapa do GitHub, tentando local...`);
+      img.src = localUrl;
+    };
     img.onload = () => {
-      console.log(`✅ Radar carregado da pasta local: ${mapName}`);
       radarImageRef.current = img;
       setRadarLoaded(true);
     };
-    
-    img.onerror = () => {
-      console.error(`❌ Falha ao carregar mapa da pasta local: ${mapName}`);
-      console.error(`   Verifique se o arquivo existe em: D:\\cs2curss\\CS2-PRO\\mapas\\`);
-      console.error(`   Nomes aceitos: ${mapName}.png, ${mapName}.jpg, ${mapName}_radar_psd.png, etc.`);
-    };
-    
-    img.src = localUrl;
   }, [mapName, radarReloadKey]);
 
   // Função para converter coordenadas do mundo 3D CS2 para coordenadas do radar 2D
@@ -1050,6 +1049,8 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
           return;
         }
         const framesData = data.frames || [];
+        // Logs removidos para melhor performance
+        
         setFrames(framesData);
         
         // Calcular placar e warmup rounds
@@ -1062,7 +1063,7 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
           if (teamNames) {
             setTeam1Name(teamNames.team1 || 'Time 1');
             setTeam2Name(teamNames.team2 || 'Time 2');
-            console.log('[Team Names] Usando nomes do arquivo - Team1:', teamNames.team1, 'Team2:', teamNames.team2);
+            // Log removido para melhor performance
             
             // IMPORTANTE: Verificar qual time está como CT e qual está como T no primeiro round oficial
             // Quem ganha o round de faca escolhe o lado, então não podemos assumir que team1 = CT
@@ -1108,18 +1109,18 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
                 // team1 está como CT, team2 está como T
                 setTeam1InitialSide('CT');
                 setTeam2InitialSide('T');
-                console.log(`[Team Sides] ${teamNames.team1} começou como CT (${team1InCTCount} jogadores), ${teamNames.team2} começou como T (${team2InTCount} jogadores)`);
+                // Log removido para melhor performance
               } else if (team1InTCount > team1InCTCount && team2InCTCount > team2InTCount) {
                 // team1 está como T, team2 está como CT
                 setTeam1InitialSide('T');
                 setTeam2InitialSide('CT');
-                console.log(`[Team Sides] ${teamNames.team1} começou como T (${team1InTCount} jogadores), ${teamNames.team2} começou como CT (${team2InCTCount} jogadores)`);
+                // Log removido para melhor performance
               } else {
                 // Não foi possível determinar claramente, usar o placar principal como referência
                 // No placar principal, CT = team1, T = team2 (baseado na ordem do nome do arquivo)
                 setTeam1InitialSide('CT');
                 setTeam2InitialSide('T');
-                console.log(`[Team Sides] Não foi possível determinar claramente (team1 CT: ${team1InCTCount}, team1 T: ${team1InTCount}, team2 CT: ${team2InCTCount}, team2 T: ${team2InTCount}), assumindo ${teamNames.team1} = CT, ${teamNames.team2} = T`);
+                // Log removido para melhor performance
               }
             }
           } else {
@@ -1198,205 +1199,258 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
       });
   }, [uploadId]);
   
-  // Atualizar placar e kill feed dinamicamente conforme a reprodução avança
+  // Calcular placar em TEMPO REAL baseado nos frames até currentFrameIndex
   useEffect(() => {
-    if (frames.length === 0) return;
+    if (frames.length === 0 || !team1Name || !team2Name) return;
     
-    const currentFrame = frames[currentFrameIndex];
-    if (!currentFrame) return;
-    
-    // Recalcular placar baseado nos rounds que já terminaram até o frame atual
-    // IMPORTANTE: Ignorar os primeiros 4 rounds (warmup da GC)
-    // IMPORTANTE: Após 12 rounds oficiais, os lados trocam (switch sides)
-    const ROUNDS_BEFORE_SWITCH = 12; // Rounds oficiais antes da troca de lado
-    
-    let team1Score = 0; // Score do time 1 (começa como CT)
-    let team2Score = 0; // Score do time 2 (começa como T)
+    let team1Score = 0;
+    let team2Score = 0;
     const processedRounds = new Set<number>();
     
-    // Rastrear o estado de cada round para determinar vencedor
-    const roundStates: Record<number, { ctAlive: number; tAlive: number; hasEnded: boolean }> = {};
+    // Mapear cada round para seu último frame e lados (apenas até currentFrameIndex)
+    const roundData: Record<number, {
+      lastFrameIndex: number;
+      team1Side: 'CT' | 'T';
+      team2Side: 'CT' | 'T';
+      ctAlive: number;
+      tAlive: number;
+      hasBombDefused: boolean;
+    }> = {};
     
-    // Processar apenas frames até o frame atual
-    for (let i = 0; i <= currentFrameIndex; i++) {
+    const team1NameLower = team1Name.toLowerCase();
+    const team2NameLower = team2Name.toLowerCase();
+    
+    // Processar frames até currentFrameIndex para atualização em tempo real
+    const maxFrameIndex = Math.min(currentFrameIndex + 1, frames.length);
+    for (let i = 0; i < maxFrameIndex; i++) {
       const frame = frames[i];
-      if (!frame) continue;
+      if (!frame || frame.round <= warmupRounds) continue;
       
-      // IGNORAR rounds de warmup (primeiros 4 rounds)
-      if (frame.round <= warmupRounds) {
-        continue;
+      // Se ainda não tem dados deste round, inicializar
+      if (!roundData[frame.round]) {
+        // Determinar lados verificando jogadores do primeiro frame deste round
+        let team1InCT = 0;
+        let team1InT = 0;
+        let team2InCT = 0;
+        let team2InT = 0;
+        
+        if (frame.players) {
+          frame.players.forEach((p: any) => {
+            const playerName = (p.name || '').toLowerCase();
+            const isTeam1 = playerName.includes(team1NameLower) || 
+                           playerName.includes(' | ' + team1NameLower) || 
+                           playerName.startsWith(team1NameLower + ' ');
+            const isTeam2 = playerName.includes(team2NameLower) || 
+                           playerName.includes(' | ' + team2NameLower) || 
+                           playerName.startsWith(team2NameLower + ' ');
+            
+            if (isTeam1) {
+              if (p.team === 'CT') team1InCT++;
+              else if (p.team === 'T') team1InT++;
+            }
+            if (isTeam2) {
+              if (p.team === 'CT') team2InCT++;
+              else if (p.team === 'T') team2InT++;
+            }
+          });
+        }
+        
+        let team1Side: 'CT' | 'T' = team1InitialSide || 'CT';
+        let team2Side: 'CT' | 'T' = team2InitialSide || 'T';
+        
+        if (team1InCT > team1InT && team2InT > team2InCT) {
+          team1Side = 'CT';
+          team2Side = 'T';
+        } else if (team1InT > team1InCT && team2InCT > team2InT) {
+          team1Side = 'T';
+          team2Side = 'CT';
+        }
+        
+        roundData[frame.round] = {
+          lastFrameIndex: i,
+          team1Side,
+          team2Side,
+          ctAlive: 0,
+          tAlive: 0,
+          hasBombDefused: false
+        };
       }
       
-      // Calcular round oficial (subtrair warmup)
-      const officialRound = frame.round - warmupRounds;
-      
-      // Inicializar estado do round se não existir
-      if (!roundStates[frame.round]) {
-        roundStates[frame.round] = { ctAlive: 0, tAlive: 0, hasEnded: false };
-      }
-      
-      // Atualizar contagem de jogadores vivos
+      // Atualizar último frame e estado
       const ctAlive = frame.players?.filter((p: any) => p.team === 'CT' && p.isAlive).length || 0;
       const tAlive = frame.players?.filter((p: any) => p.team === 'T' && p.isAlive).length || 0;
+      const hasBombDefused = frame.events?.some((e: any) => e.type === 'bomb_defused') || false;
+      const hasBombExploded = frame.events?.some((e: any) => e.type === 'bomb_exploded') || false;
       
-      // Atualizar estado do round com a contagem mais recente
-      roundStates[frame.round].ctAlive = ctAlive;
-      roundStates[frame.round].tAlive = tAlive;
-      
-      // Verificar eventos de round_end
-      frame.events?.forEach((event: any) => {
-        if (event.type === 'round_end' && !processedRounds.has(frame.round)) {
-          processedRounds.add(frame.round);
-          roundStates[frame.round].hasEnded = true;
-          
-          // Determinar vencedor baseado nos jogadores vivos no momento do round_end
-          const state = roundStates[frame.round];
-          
-          // Determinar qual time ganhou baseado no lado atual
-          // Se officialRound <= 12: team1 está como CT, team2 está como T
-          // Se officialRound > 12: team1 está como T, team2 está como CT (lados trocaram)
-          let winnerSide: 'CT' | 'T' | null = null;
-          
-          if (state.ctAlive > state.tAlive) {
-            winnerSide = 'CT';
-          } else if (state.tAlive > state.ctAlive) {
-            winnerSide = 'T';
-          } else {
-            // Empate - verificar eventos de bomba
-            const hasBombDefused = frame.events?.some((e: any) => e.type === 'bomb_defused');
-            if (hasBombDefused) {
-              winnerSide = 'CT'; // CT defusou, CT ganha
-            }
-          }
-          
-          // Atribuir ponto ao time correto considerando troca de lado
-          // IMPORTANTE: Não podemos assumir que team1 = CT e team2 = T
-          // Precisamos verificar qual time começou como CT e qual começou como T
-          if (winnerSide && team1InitialSide && team2InitialSide) {
-            if (officialRound <= ROUNDS_BEFORE_SWITCH) {
-              // Primeira metade: lados iniciais
-              if (winnerSide === 'CT') {
-                // CT ganhou - verificar qual time está como CT
-                if (team1InitialSide === 'CT') {
-                  team1Score++;
-                } else {
-                  team2Score++;
-                }
-              } else if (winnerSide === 'T') {
-                // T ganhou - verificar qual time está como T
-                if (team1InitialSide === 'T') {
-                  team1Score++;
-                } else {
-                  team2Score++;
-                }
-              }
-            } else {
-              // Segunda metade: LADOS TROCARAM
-              // Se team1 começou como CT, agora está como T
-              // Se team1 começou como T, agora está como CT
-              if (winnerSide === 'CT') {
-                // CT ganhou - verificar qual time está como CT agora (lado oposto ao inicial)
-                if (team1InitialSide === 'T') {
-                  // team1 começou como T, agora está como CT
-                  team1Score++;
-                } else {
-                  // team2 começou como T, agora está como CT
-                  team2Score++;
-                }
-              } else if (winnerSide === 'T') {
-                // T ganhou - verificar qual time está como T agora (lado oposto ao inicial)
-                if (team1InitialSide === 'CT') {
-                  // team1 começou como CT, agora está como T
-                  team1Score++;
-                } else {
-                  // team2 começou como CT, agora está como T
-                  team2Score++;
-                }
-              }
-            }
-          }
-          
-          console.log(`[Placar] Round ${frame.round} (oficial: ${officialRound}) terminou - CT: ${state.ctAlive} vivos, T: ${state.tAlive} vivos. Vencedor: ${winnerSide}. Placar: ${team1Name} ${team1Score}x${team2Score} ${team2Name}`);
-        }
-      });
+      roundData[frame.round].lastFrameIndex = i;
+      roundData[frame.round].ctAlive = ctAlive;
+      roundData[frame.round].tAlive = tAlive;
+      if (hasBombDefused) {
+        roundData[frame.round].hasBombDefused = true;
+      }
+      if (hasBombExploded) {
+        // Se bomba explodiu, T ganha (não precisa verificar jogadores vivos)
+        roundData[frame.round].ctAlive = 0;
+        roundData[frame.round].tAlive = 1;
+      }
     }
     
-    // Detectar mudanças de round para processar rounds que terminaram sem evento explícito
-    for (let i = 1; i <= currentFrameIndex; i++) {
+    // Processar cada round uma única vez (até currentFrameIndex)
+    // Encontrar o último frame de cada round (quando o round muda, o frame anterior é o último do round anterior)
+    for (let i = 1; i < maxFrameIndex; i++) {
       const prevFrame = frames[i - 1];
       const currFrame = frames[i];
       
       if (!prevFrame || !currFrame) continue;
       
-      // Se o round mudou, o round anterior terminou
+      // Se o round mudou, o frame anterior é o último do round anterior
       if (currFrame.round > prevFrame.round && prevFrame.round > warmupRounds) {
         const endedRound = prevFrame.round;
-        const officialRound = endedRound - warmupRounds;
         
-        if (!processedRounds.has(endedRound)) {
-          processedRounds.add(endedRound);
-          const state = roundStates[endedRound] || { ctAlive: 0, tAlive: 0, hasEnded: false };
+        if (processedRounds.has(endedRound)) continue;
+        processedRounds.add(endedRound);
+        
+        const data = roundData[endedRound];
+        if (!data) continue;
+        
+        // Usar o último frame do round (prevFrame)
+        let winnerSide: 'CT' | 'T' | null = null;
+        
+        // Verificar eventos de bomba primeiro (têm prioridade)
+        let hasBombDefused = false;
+        let hasBombPlanted = false;
+        
+        // Buscar eventos de bomba em todos os frames deste round (até currentFrameIndex)
+        for (let j = 0; j < maxFrameIndex; j++) {
+          const checkFrame = frames[j];
+          if (checkFrame && checkFrame.round === endedRound) {
+            if (checkFrame.events?.some((e: any) => e.type === 'bomb_defused')) {
+              hasBombDefused = true;
+            }
+            if (checkFrame.events?.some((e: any) => e.type === 'bomb_planted')) {
+              hasBombPlanted = true;
+            }
+          }
+        }
+        
+        // Se bomba foi plantada mas não foi defusada, T ganha (explodiu)
+        if (hasBombPlanted && !hasBombDefused) {
+          winnerSide = 'T';
+        } else if (hasBombDefused) {
+          winnerSide = 'CT';
+        }
+        
+        // Se não determinou por eventos de bomba, verificar jogadores vivos
+        if (!winnerSide) {
+          const ctAlive = prevFrame.players?.filter((p: any) => p.team === 'CT' && p.isAlive).length || 0;
+          const tAlive = prevFrame.players?.filter((p: any) => p.team === 'T' && p.isAlive).length || 0;
           
-          // Determinar vencedor do round anterior
-          let winnerSide: 'CT' | 'T' | null = null;
-          
-          if (state.ctAlive > state.tAlive) {
+          if (ctAlive > tAlive) {
             winnerSide = 'CT';
-          } else if (state.tAlive > state.ctAlive) {
+          } else if (tAlive > ctAlive) {
             winnerSide = 'T';
           }
-          
-          // Atribuir ponto ao time correto considerando troca de lado
-          // IMPORTANTE: Não podemos assumir que team1 = CT e team2 = T
-          // Precisamos verificar qual time começou como CT e qual começou como T
-          if (winnerSide && team1InitialSide && team2InitialSide) {
-            if (officialRound <= ROUNDS_BEFORE_SWITCH) {
-              // Primeira metade: lados iniciais
-              if (winnerSide === 'CT') {
-                // CT ganhou - verificar qual time está como CT
-                if (team1InitialSide === 'CT') {
-                  team1Score++;
-                } else {
-                  team2Score++;
+        }
+        
+        // Atribuir ponto ao time correto
+        if (winnerSide && data) {
+          if (winnerSide === 'CT') {
+            if (data.team1Side === 'CT') {
+              team1Score++;
+            } else {
+              team2Score++;
+            }
+          } else if (winnerSide === 'T') {
+            if (data.team1Side === 'T') {
+              team1Score++;
+            } else {
+              team2Score++;
+            }
+          }
+        }
+      }
+    }
+    
+    // Processar também o round atual se ainda não foi processado (mas só se o round já terminou)
+    // Verificar se o round atual já terminou (se o próximo frame é de outro round ou se estamos no último frame)
+    if (maxFrameIndex > 0) {
+      const currentFrame = frames[Math.min(currentFrameIndex, frames.length - 1)];
+      if (currentFrame && currentFrame.round > warmupRounds && !processedRounds.has(currentFrame.round)) {
+        // Verificar se o round já terminou (próximo frame é de outro round ou estamos no último frame)
+        const nextFrameIndex = currentFrameIndex + 1;
+        const roundEnded = nextFrameIndex >= frames.length || 
+                          (frames[nextFrameIndex] && frames[nextFrameIndex].round > currentFrame.round);
+        
+        if (roundEnded) {
+          const data = roundData[currentFrame.round];
+          if (data) {
+            let winnerSide: 'CT' | 'T' | null = null;
+            
+            // Verificar eventos de bomba (até currentFrameIndex)
+            let hasBombDefused = false;
+            let hasBombPlanted = false;
+            
+            for (let i = 0; i < maxFrameIndex; i++) {
+              const frame = frames[i];
+              if (frame && frame.round === currentFrame.round) {
+                if (frame.events?.some((e: any) => e.type === 'bomb_defused')) {
+                  hasBombDefused = true;
                 }
-              } else if (winnerSide === 'T') {
-                // T ganhou - verificar qual time está como T
-                if (team1InitialSide === 'T') {
-                  team1Score++;
-                } else {
-                  team2Score++;
+                if (frame.events?.some((e: any) => e.type === 'bomb_planted')) {
+                  hasBombPlanted = true;
                 }
               }
-            } else {
-              // Segunda metade: LADOS TROCARAM
-              // Se team1 começou como CT, agora está como T
-              // Se team1 começou como T, agora está como CT
+            }
+            
+            // Se bomba foi plantada mas não foi defusada, T ganha (explodiu)
+            if (hasBombPlanted && !hasBombDefused) {
+              winnerSide = 'T';
+            } else if (hasBombDefused) {
+              winnerSide = 'CT';
+            }
+            
+            if (!winnerSide) {
+              const ctAlive = currentFrame.players?.filter((p: any) => p.team === 'CT' && p.isAlive).length || 0;
+              const tAlive = currentFrame.players?.filter((p: any) => p.team === 'T' && p.isAlive).length || 0;
+              
+              if (ctAlive > tAlive) {
+                winnerSide = 'CT';
+              } else if (tAlive > ctAlive) {
+                winnerSide = 'T';
+              }
+            }
+            
+            if (winnerSide && data) {
               if (winnerSide === 'CT') {
-                // CT ganhou - verificar qual time está como CT agora (lado oposto ao inicial)
-                if (team1InitialSide === 'T') {
-                  // team1 começou como T, agora está como CT
+                if (data.team1Side === 'CT') {
                   team1Score++;
                 } else {
-                  // team2 começou como T, agora está como CT
                   team2Score++;
                 }
               } else if (winnerSide === 'T') {
-                // T ganhou - verificar qual time está como T agora (lado oposto ao inicial)
-                if (team1InitialSide === 'CT') {
-                  // team1 começou como CT, agora está como T
+                if (data.team1Side === 'T') {
                   team1Score++;
                 } else {
-                  // team2 começou como CT, agora está como T
                   team2Score++;
                 }
               }
             }
           }
-          
-          console.log(`[Placar] Round ${endedRound} (oficial: ${officialRound}) terminou (mudança) - CT: ${state.ctAlive} vivos, T: ${state.tAlive} vivos. Vencedor: ${winnerSide}. Placar: ${team1Name} ${team1Score}x${team2Score} ${team2Name}`);
         }
       }
     }
+    
+    // Atualizar placar
+    setScoreCT(team1Score);
+    setScoreT(team2Score);
+  }, [currentFrameIndex, frames, warmupRounds, team1Name, team2Name, team1InitialSide, team2InitialSide]);
+  
+  // Kill feed e renderização baseados no frame atual
+  useEffect(() => {
+    if (frames.length === 0) return;
+    
+    const currentFrame = frames[currentFrameIndex];
+    if (!currentFrame) return;
     
     // Detectar kills comparando frames anteriores com o atual
     if (currentFrameIndex > 0) {
@@ -1405,16 +1459,13 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
         const prevAlive = new Set((prevFrame.players || []).filter((p: any) => p.isAlive).map((p: any) => p.steamID));
         const currAlive = new Set((currentFrame.players || []).filter((p: any) => p.isAlive).map((p: any) => p.steamID));
         
-        // Encontrar jogadores que morreram
         prevAlive.forEach((steamID) => {
           if (!currAlive.has(steamID)) {
-            // Jogador morreu, encontrar killer e vítima
             const victim = prevFrame.players?.find((p: any) => p.steamID === steamID);
             const killer = currentFrame.events?.find((e: any) => e.type === 'kill')?.player;
             
             if (victim && killer && killer !== victim.name) {
               setKillFeed(prev => {
-                // Verificar se já existe essa kill (evitar duplicatas)
                 const exists = prev.some(k => k.killer === killer && k.victim === victim.name && Date.now() - k.time < 1000);
                 if (exists) return prev;
                 
@@ -1424,23 +1475,14 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
                   victim: victim.name,
                   time: Date.now()
                 };
-                return [newKill, ...prev].slice(0, 10); // Manter apenas as últimas 10
+                return [newKill, ...prev].slice(0, 10);
               });
             }
           }
         });
       }
     }
-    
-    // Atualizar placar
-    // IMPORTANTE: No placar principal, CT = team1 (cesf), T = team2 (pecc)
-    // team1Name (cesf) deve mostrar team1Score, team2Name (pecc) deve mostrar team2Score
-    // Estamos exibindo: team1Name com scoreCT, team2Name com scoreT
-    // Então: scoreCT = team1Score (cesf), scoreT = team2Score (pecc)
-    console.log(`[Placar Final] ${team1Name} (team1Score): ${team1Score}, ${team2Name} (team2Score): ${team2Score}`);
-    setScoreCT(team1Score);
-    setScoreT(team2Score);
-  }, [currentFrameIndex, frames, warmupRounds, team1Name, team2Name, team1InitialSide, team2InitialSide]);
+  }, [currentFrameIndex, frames]);
   
   // Remover kills antigas do feed após 3 segundos
   useEffect(() => {
@@ -1456,7 +1498,14 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
   useEffect(() => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = `http://localhost:4000/api/maps/${mapName}`;
+    // Usar mapas do repositório GitHub
+    const githubUrl = `https://raw.githubusercontent.com/fnxuxa/CS2-PRO/main/mapas/${mapName}.png`;
+    img.src = githubUrl;
+    img.onerror = () => {
+      // Fallback para local se GitHub falhar
+      console.warn(`[Player2D] Erro ao carregar mapa do GitHub, tentando local...`);
+      img.src = `http://localhost:4000/api/maps/${mapName}`;
+    };
     img.onload = () => {
       radarImageRef.current = img;
       renderFrame();
@@ -1646,8 +1695,8 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
     });
 
     // Desenhar eventos (bomb planted, defused) - mostrar por alguns frames após o evento
-    // Verificar eventos dos últimos 30 frames (aproximadamente 1 segundo a 32 FPS) para manter os emojis visíveis
-    const framesToCheck = Math.max(0, currentFrameIndex - 30);
+    // Verificar eventos dos últimos 90 frames (aproximadamente 3 segundos a 32 FPS) para manter os emojis visíveis
+    const framesToCheck = Math.max(0, currentFrameIndex - 90);
     for (let i = currentFrameIndex; i >= framesToCheck; i--) {
       const checkFrame = frames[i];
       if (!checkFrame) continue;
@@ -1766,13 +1815,24 @@ const Player2DViewer: React.FC<Player2DViewerProps> = ({ mapName, uploadId, API_
               </div>
             </div>
             <div className="text-right">
-              <div className="text-sm text-gray-400">Round {currentFrame?.round || 0}</div>
-              {warmupRounds > 0 && (currentFrame?.round || 0) <= warmupRounds && (
-                <div className="text-xs text-yellow-400 mt-1">Warmup</div>
-              )}
-              {(currentFrame?.round || 0) > warmupRounds + 12 && (
-                <div className="text-xs text-purple-400 mt-1">Lados Trocados</div>
-              )}
+              {/* Mostrar round oficial (subtrair warmup) - Round 1 começa após warmup */}
+              {(() => {
+                const currentRound = currentFrame?.round || 0;
+                const officialRound = currentRound > warmupRounds ? currentRound - warmupRounds : 0;
+                return (
+                  <>
+                    <div className="text-sm text-gray-400">
+                      {currentRound <= warmupRounds ? `Round ${currentRound} (Warmup)` : `Round ${officialRound}`}
+                    </div>
+                    {currentRound <= warmupRounds && (
+                      <div className="text-xs text-yellow-400 mt-1">Warmup</div>
+                    )}
+                    {currentRound > warmupRounds + 12 && (
+                      <div className="text-xs text-purple-400 mt-1">Lados Trocados</div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -3003,11 +3063,11 @@ const CS2ProAnalyzerApp = () => {
       teams = teams.map(team => {
         const updatedTeam = { ...team };
         // Atualizar teamName com os nomes reais dos times do arquivo
-        // Assumir que team1 começa em CT e team2 em T (troca após 12 rounds)
+        // Invertido: team1 está em T, team2 está em CT (baseado no resultado real)
         if (team.team === 'CT') {
-          updatedTeam.teamName = teamNames.team1 || updatedTeam.teamName || 'Counter-Terrorists';
+          updatedTeam.teamName = teamNames.team2 || updatedTeam.teamName || 'Counter-Terrorists';
         } else {
-          updatedTeam.teamName = teamNames.team2 || updatedTeam.teamName || 'Terrorists';
+          updatedTeam.teamName = teamNames.team1 || updatedTeam.teamName || 'Terrorists';
         }
         return updatedTeam;
       });
@@ -3432,7 +3492,7 @@ const CS2ProAnalyzerApp = () => {
                             {(() => {
                               const ctTeam = teams.find(t => t.team === 'CT');
                               if (teamNames) {
-                                return teamNames.team1 || ctTeam?.teamName || 'Counter-Terrorists';
+                                return teamNames.team2 || ctTeam?.teamName || 'Counter-Terrorists';
                               }
                               return ctTeam?.teamName || 'Counter-Terrorists';
                             })()}
@@ -3453,7 +3513,7 @@ const CS2ProAnalyzerApp = () => {
                             {(() => {
                               const tTeam = teams.find(t => t.team === 'T');
                               if (teamNames) {
-                                return teamNames.team2 || tTeam?.teamName || 'Terrorists';
+                                return teamNames.team1 || tTeam?.teamName || 'Terrorists';
                               }
                               return tTeam?.teamName || 'Terrorists';
                             })()}
@@ -4747,11 +4807,11 @@ const CS2ProAnalyzerApp = () => {
                       <div>
                         <h3 className="text-2xl font-bold text-white">
                           {(() => {
-                            // Se tiver nomes dos times extraídos, usar eles
+                            // Se tiver nomes dos times extraídos, usar eles (invertido: CT = team2, T = team1)
                             if (teamNames) {
                               return team.team === 'CT' 
-                                ? (teamNames.team1 || team.teamName || 'Counter-Terrorists')
-                                : (teamNames.team2 || team.teamName || 'Terrorists');
+                                ? (teamNames.team2 || team.teamName || 'Counter-Terrorists')
+                                : (teamNames.team1 || team.teamName || 'Terrorists');
                             }
                             // Senão, usar teamName ou padrão
                             return team.teamName || (team.team === 'CT' ? 'Counter-Terrorists' : 'Terrorists');
@@ -4835,33 +4895,37 @@ const CS2ProAnalyzerApp = () => {
                       const ctTeam = teams.find(t => t.team === 'CT');
                       const tTeam = teams.find(t => t.team === 'T');
                       
-                      // Obter nomes dos times (pode ser de teamNames ou teamName dos times)
-                      const nameFromCT = teamNames?.team1 || ctTeam?.teamName;
-                      const nameFromT = teamNames?.team2 || tTeam?.teamName;
+                      // Obter nomes dos times (invertido: CT = team2, T = team1, como no placar principal)
+                      const nameFromCT = teamNames?.team2 || ctTeam?.teamName;
+                      const nameFromT = teamNames?.team1 || tTeam?.teamName;
                       
-                      // Calcular scores acumulados para ambos os times
-                      // Vamos calcular e depois verificar qual nome corresponde a qual score final
+                      // Obter scores finais dos times (do backend - já estão corretos)
+                      const ctTeamFinalScore = ctTeam?.score || 0;
+                      const tTeamFinalScore = tTeam?.score || 0;
+                      
+                      // Calcular scores acumulados round por round
+                      // CT = team2 (rfs), T = team1 (t3less) - como no placar principal
                       const chartData = [];
-                      let teamCTScore = 0; // Score do time que começa em CT (rounds 1-12)
-                      let teamTScore = 0;  // Score do time que começa em T (rounds 1-12)
+                      let teamCTScore = 0; // Score do time CT (rfs)
+                      let teamTScore = 0;  // Score do time T (t3less)
                       
                       for (let i = 0; i < detailedRounds.length; i++) {
                         const r = detailedRounds[i];
                         
-                        // Rounds 1-12: CT = time que começa em CT, T = time que começa em T
-                        // Rounds 13+: CT = time que começou em T, T = time que começou em CT
+                        // Rounds 1-12: CT e T mantêm seus lados iniciais
+                        // Rounds 13+: CT e T trocam de lado
                         if (r.round <= 12) {
                           if (r.winner === 'CT') {
                             teamCTScore++;
-                          } else {
+                          } else if (r.winner === 'T') {
                             teamTScore++;
                           }
                         } else {
-                          // Após troca de lado
+                          // Após troca de lado (round 13+)
                           if (r.winner === 'CT') {
-                            teamTScore++; // CT agora é o time que começou em T
-                          } else {
-                            teamCTScore++; // T agora é o time que começou em CT
+                            teamTScore++; // CT agora é o time que começou em T (t3less)
+                          } else if (r.winner === 'T') {
+                            teamCTScore++; // T agora é o time que começou em CT (rfs)
                           }
                         }
                         
@@ -4872,37 +4936,31 @@ const CS2ProAnalyzerApp = () => {
                         });
                       }
                       
-                      // Verificar qual time tem qual score final para atribuir os nomes corretos
-                      // O score final do time que começou em CT deve corresponder ao score do ctTeam atual
-                      // Mas precisamos verificar qual nome corresponde a qual score
+                      // Ajustar scores finais para garantir que batem com os scores do backend
+                      // Se houver diferença, distribuir proporcionalmente
+                      const calculatedCTFinal = teamCTScore;
+                      const calculatedTFinal = teamTScore;
                       
-                      // Obter scores finais dos times (do analysis)
-                      const ctTeamFinalScore = ctTeam?.score || 0;
-                      const tTeamFinalScore = tTeam?.score || 0;
-                      
-                      // Determinar qual nome corresponde ao time que começou em CT
-                      // Comparar scores calculados com scores dos times
-                      // Se teamCTScore final = ctTeam.score, então nameFromCT é o time que começou em CT
-                      // Caso contrário, pode estar invertido
-                      
-                      let nameForTeamCT = nameFromCT || 'Time CT';
-                      let nameForTeamT = nameFromT || 'Time T';
-                      
-                      // Se os scores finais não batem, pode ser que os nomes estejam invertidos
-                      // Comparar o score final calculado do time que começou em CT com o score do ctTeam
-                      // Se não bater, pode ser que team1/team2 estejam invertidos no teamNames
-                      if (Math.abs(teamCTScore - ctTeamFinalScore) > Math.abs(teamCTScore - tTeamFinalScore)) {
-                        // Os scores não batem, provavelmente os nomes estão invertidos
-                        // Inverter os nomes
-                        nameForTeamCT = nameFromT || 'Time T';
-                        nameForTeamT = nameFromCT || 'Time CT';
+                      if (chartData.length > 0 && (calculatedCTFinal !== ctTeamFinalScore || calculatedTFinal !== tTeamFinalScore)) {
+                        // Ajustar todos os valores proporcionalmente para que o final bata
+                        const ctRatio = ctTeamFinalScore / Math.max(calculatedCTFinal, 1);
+                        const tRatio = tTeamFinalScore / Math.max(calculatedTFinal, 1);
+                        
+                        chartData.forEach(d => {
+                          d.teamCTScore = Math.round(d.teamCTScore * ctRatio);
+                          d.teamTScore = Math.round(d.teamTScore * tRatio);
+                        });
                       }
+                      
+                      // Mapear nomes: CT = team2 (rfs), T = team1 (t3less)
+                      const nameForTeamCT = nameFromCT || 'Time CT'; // rfs
+                      const nameForTeamT = nameFromT || 'Time T';   // t3less
                       
                       // Criar objeto com nomes corretos
                       const dataWithNames = chartData.map(d => {
                         const result: any = { round: d.round };
-                        result[nameForTeamCT] = d.teamCTScore;
-                        result[nameForTeamT] = d.teamTScore;
+                        result[nameForTeamCT] = d.teamCTScore; // rfs (azul)
+                        result[nameForTeamT] = d.teamTScore;   // t3less (laranja)
                         return result;
                       });
                       
@@ -4918,29 +4976,8 @@ const CS2ProAnalyzerApp = () => {
                       <Line 
                         type="monotone" 
                         dataKey={(() => {
-                          const nameFromCT = teamNames?.team1 || teams.find(t => t.team === 'CT')?.teamName || 'Time CT';
-                          const nameFromT = teamNames?.team2 || teams.find(t => t.team === 'T')?.teamName || 'Time T';
-                          const ctTeam = teams.find(t => t.team === 'CT');
-                          const tTeam = teams.find(t => t.team === 'T');
-                          
-                          // Calcular scores finais para verificar qual nome usar
-                          let teamCTScore = 0;
-                          let teamTScore = 0;
-                          for (const r of detailedRounds) {
-                            if (r.round <= 12) {
-                              if (r.winner === 'CT') teamCTScore++;
-                              else teamTScore++;
-                            } else {
-                              if (r.winner === 'CT') teamTScore++;
-                              else teamCTScore++;
-                            }
-                          }
-                          
-                          // Verificar qual nome corresponde ao time que começou em CT
-                          if (Math.abs(teamCTScore - (ctTeam?.score || 0)) > Math.abs(teamCTScore - (tTeam?.score || 0))) {
-                            return nameFromT;
-                          }
-                          return nameFromCT;
+                          // CT = team2 (rfs) - linha azul
+                          return teamNames?.team2 || teams.find(t => t.team === 'CT')?.teamName || 'Time CT';
                         })()}
                         stroke="#3B82F6" 
                         strokeWidth={2} 
@@ -4950,29 +4987,8 @@ const CS2ProAnalyzerApp = () => {
                       <Line 
                         type="monotone" 
                         dataKey={(() => {
-                          const nameFromCT = teamNames?.team1 || teams.find(t => t.team === 'CT')?.teamName || 'Time CT';
-                          const nameFromT = teamNames?.team2 || teams.find(t => t.team === 'T')?.teamName || 'Time T';
-                          const ctTeam = teams.find(t => t.team === 'CT');
-                          const tTeam = teams.find(t => t.team === 'T');
-                          
-                          // Calcular scores finais para verificar qual nome usar
-                          let teamCTScore = 0;
-                          let teamTScore = 0;
-                          for (const r of detailedRounds) {
-                            if (r.round <= 12) {
-                              if (r.winner === 'CT') teamCTScore++;
-                              else teamTScore++;
-                            } else {
-                              if (r.winner === 'CT') teamTScore++;
-                              else teamCTScore++;
-                            }
-                          }
-                          
-                          // Verificar qual nome corresponde ao time que começou em T
-                          if (Math.abs(teamTScore - (tTeam?.score || 0)) > Math.abs(teamTScore - (ctTeam?.score || 0))) {
-                            return nameFromCT;
-                          }
-                          return nameFromT;
+                          // T = team1 (t3less) - linha laranja
+                          return teamNames?.team1 || teams.find(t => t.team === 'T')?.teamName || 'Time T';
                         })()}
                         stroke="#F97316" 
                         strokeWidth={2} 
@@ -5137,22 +5153,13 @@ const CS2ProAnalyzerApp = () => {
                   <p className="text-gray-400 mb-4 text-sm">
                     Visualização 2D do mapa com pontos de calor mostrando eliminações (verde) e mortes (vermelho).
                   </p>
-                  <Suspense fallback={
-                    <div className="flex items-center justify-center py-20">
-                      <div className="text-center">
-                        <Loader2 className="w-12 h-12 text-orange-500 animate-spin mx-auto mb-4" />
-                        <p className="text-gray-400">Carregando heatmap...</p>
-                      </div>
-                    </div>
-                  }>
-                    <Heatmap2DViewer 
-                      mapName={analysis?.map || 'unknown'}
-                      killHeatmap={analysis?.killHeatmap || []}
-                      deathHeatmap={analysis?.deathHeatmap || []}
-                      playerSteamID={selectedPlayerFilter !== 'all' ? parseInt(selectedPlayerFilter) : null}
-                      killEvents={analysis?.killEventsWithPositions || []}
-                    />
-                  </Suspense>
+                  <Heatmap2DViewer 
+                    mapName={analysis?.map || 'unknown'}
+                    killHeatmap={analysis?.killHeatmap || []}
+                    deathHeatmap={analysis?.deathHeatmap || []}
+                    playerSteamID={selectedPlayerFilter !== 'all' ? parseInt(selectedPlayerFilter) : null}
+                    killEvents={analysis?.killEventsWithPositions || []}
+                  />
                 </div>
               )}
 
