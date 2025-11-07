@@ -3059,15 +3059,78 @@ const CS2ProAnalyzerApp = () => {
     
     // Atualizar nomes dos times com os nomes reais extraídos do arquivo
     let teams = analysis.teams || [];
+    
+    // Determinar qual time está em qual lado baseado nos jogadores
+    // Verificar qual time está em CT e qual está em T no primeiro round oficial
+    let team1InCT = false;
+    let team2InCT = false;
+    
+    if (teamNames && players.length > 0) {
+      // Verificar jogadores do time CT
+      const ctPlayers = players.filter(p => p.team === 'CT');
+      const tPlayers = players.filter(p => p.team === 'T');
+      
+      // Verificar se algum jogador do CT tem nome que corresponde a team1 ou team2
+      const team1NameLower = (teamNames.team1 || '').toLowerCase();
+      const team2NameLower = (teamNames.team2 || '').toLowerCase();
+      
+      // Contar quantos jogadores de cada time estão em CT
+      let ctTeam1Count = 0;
+      let ctTeam2Count = 0;
+      
+      ctPlayers.forEach(p => {
+        const playerNameLower = p.name.toLowerCase();
+        // Verificar se o nome do jogador contém o nome do time
+        if (team1NameLower && playerNameLower.includes(team1NameLower)) {
+          ctTeam1Count++;
+        }
+        if (team2NameLower && playerNameLower.includes(team2NameLower)) {
+          ctTeam2Count++;
+        }
+      });
+      
+      // Verificar também pelos nomes dos times nos dados do backend
+      const ctTeam = teams.find(t => t.team === 'CT');
+      const tTeam = teams.find(t => t.team === 'T');
+      
+      if (ctTeam?.teamName) {
+        const ctTeamNameLower = ctTeam.teamName.toLowerCase();
+        if (team1NameLower && ctTeamNameLower.includes(team1NameLower)) {
+          ctTeam1Count += 5; // Dar mais peso ao nome do time
+        }
+        if (team2NameLower && ctTeamNameLower.includes(team2NameLower)) {
+          ctTeam2Count += 5;
+        }
+      }
+      
+      // Determinar qual time está em CT baseado na contagem
+      if (ctTeam1Count > ctTeam2Count) {
+        team1InCT = true;
+      } else if (ctTeam2Count > ctTeam1Count) {
+        team2InCT = true;
+      } else {
+        // Empate: verificar pelo nome do time no backend
+        if (ctTeam?.teamName && teamNames.team1 && ctTeam.teamName.toLowerCase().includes(teamNames.team1.toLowerCase())) {
+          team1InCT = true;
+        } else if (ctTeam?.teamName && teamNames.team2 && ctTeam.teamName.toLowerCase().includes(teamNames.team2.toLowerCase())) {
+          team2InCT = true;
+        } else {
+          // Fallback padrão: assumir que team1 está em CT e team2 em T
+          team1InCT = true;
+        }
+      }
+    }
+    
     if (teamNames) {
       teams = teams.map(team => {
         const updatedTeam = { ...team };
         // Atualizar teamName com os nomes reais dos times do arquivo
-        // Invertido: team1 está em T, team2 está em CT (baseado no resultado real)
         if (team.team === 'CT') {
-          updatedTeam.teamName = teamNames.team2 || updatedTeam.teamName || 'Counter-Terrorists';
+          // Se team1 está em CT, usar team1, senão usar team2
+          updatedTeam.teamName = team1InCT ? (teamNames.team1 || updatedTeam.teamName || 'Counter-Terrorists') : (teamNames.team2 || updatedTeam.teamName || 'Counter-Terrorists');
         } else {
-          updatedTeam.teamName = teamNames.team1 || updatedTeam.teamName || 'Terrorists';
+          // Se team1 está em CT, então team2 está em T, senão team1 está em T
+          updatedTeam.teamName = team1InCT ? (teamNames.team2 || updatedTeam.teamName || 'Terrorists') : (teamNames.team1 || updatedTeam.teamName || 'Terrorists');
         }
         return updatedTeam;
       });
@@ -3487,13 +3550,10 @@ const CS2ProAnalyzerApp = () => {
                   <div className="flex items-center justify-between">
                       <div className="text-center flex-1">
                         <div className="flex items-center justify-center gap-2 mb-2">
-                          <Shield className="w-6 h-6 text-blue-400" />
+                          <span className="text-blue-400 text-sm font-bold">Time A</span>
                           <span className="text-gray-400 text-sm font-semibold">
                             {(() => {
                               const ctTeam = teams.find(t => t.team === 'CT');
-                              if (teamNames) {
-                                return teamNames.team2 || ctTeam?.teamName || 'Counter-Terrorists';
-                              }
                               return ctTeam?.teamName || 'Counter-Terrorists';
                             })()}
                           </span>
@@ -3508,13 +3568,10 @@ const CS2ProAnalyzerApp = () => {
                       
                       <div className="text-center flex-1">
                         <div className="flex items-center justify-center gap-2 mb-2">
-                          <Skull className="w-6 h-6 text-orange-400" />
+                          <span className="text-orange-400 text-sm font-bold">Time B</span>
                           <span className="text-gray-400 text-sm font-semibold">
                             {(() => {
                               const tTeam = teams.find(t => t.team === 'T');
-                              if (teamNames) {
-                                return teamNames.team1 || tTeam?.teamName || 'Terrorists';
-                              }
                               return tTeam?.teamName || 'Terrorists';
                             })()}
                           </span>
@@ -4171,7 +4228,16 @@ const CS2ProAnalyzerApp = () => {
                                 ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
                                 : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
                             }`}>
-                              {player.team}
+                              {(() => {
+                                // Determinar qual time o jogador pertence baseado no lado
+                                if (player.team === 'CT') {
+                                  // Se team1 está em CT, mostrar "Time A", senão "Time B"
+                                  return team1InCT ? 'Time A' : 'Time B';
+                                } else {
+                                  // Se team1 está em CT, então team2 está em T (Time B), senão team1 está em T (Time A)
+                                  return team1InCT ? 'Time B' : 'Time A';
+                                }
+                              })()}
                             </span>
                           </td>
                           <td className="text-center py-4 px-4">
@@ -4806,18 +4872,18 @@ const CS2ProAnalyzerApp = () => {
                       )}
                       <div>
                         <h3 className="text-2xl font-bold text-white">
-                          {(() => {
-                            // Se tiver nomes dos times extraídos, usar eles (invertido: CT = team2, T = team1)
-                            if (teamNames) {
-                              return team.team === 'CT' 
-                                ? (teamNames.team2 || team.teamName || 'Counter-Terrorists')
-                                : (teamNames.team1 || team.teamName || 'Terrorists');
-                            }
-                            // Senão, usar teamName ou padrão
-                            return team.teamName || (team.team === 'CT' ? 'Counter-Terrorists' : 'Terrorists');
-                          })()}
+                          {team.teamName || (team.team === 'CT' ? 'Counter-Terrorists' : 'Terrorists')}
                         </h3>
-                        <p className="text-sm text-gray-400">Score: {team.score}</p>
+                        <p className="text-sm text-gray-400">
+                          {(() => {
+                            // Mostrar "Time A" ou "Time B" baseado em qual time está neste lado
+                            if (team.team === 'CT') {
+                              return team1InCT ? 'Time A' : 'Time B';
+                            } else {
+                              return team1InCT ? 'Time B' : 'Time A';
+                            }
+                          })()} • Score: {team.score}
+                        </p>
                       </div>
                     </div>
 
@@ -4895,72 +4961,93 @@ const CS2ProAnalyzerApp = () => {
                       const ctTeam = teams.find(t => t.team === 'CT');
                       const tTeam = teams.find(t => t.team === 'T');
                       
-                      // Obter nomes dos times (invertido: CT = team2, T = team1, como no placar principal)
-                      const nameFromCT = teamNames?.team2 || ctTeam?.teamName;
-                      const nameFromT = teamNames?.team1 || tTeam?.teamName;
-                      
                       // Obter scores finais dos times (do backend - já estão corretos)
                       const ctTeamFinalScore = ctTeam?.score || 0;
                       const tTeamFinalScore = tTeam?.score || 0;
                       
+                      // IMPORTANTE: Os pontos pertencem aos TIMES, não aos lados
+                      // Quando os lados trocam, os pontos dos times permanecem os mesmos
+                      // Precisamos rastrear qual time está em qual lado em cada round
+                      
+                      // Determinar qual time começou em qual lado usando a mesma lógica do placar principal
+                      // team1InCT e team2InCT já foram calculados acima
+                      const team1StartsAs: 'CT' | 'T' = team1InCT ? 'CT' : 'T';
+                      const team2StartsAs: 'CT' | 'T' = team2InCT ? 'CT' : 'T';
+                      
+                      // Obter nomes dos times baseado em qual time está em qual lado
+                      // Time A (azul) = time que está em CT, Time B (laranja) = time que está em T
+                      const nameForCTTeam = team1InCT 
+                        ? (teamNames?.team1 || ctTeam?.teamName || 'Time A')
+                        : (teamNames?.team2 || ctTeam?.teamName || 'Time B');
+                      const nameForTTeam = team1InCT 
+                        ? (teamNames?.team2 || tTeam?.teamName || 'Time B')
+                        : (teamNames?.team1 || tTeam?.teamName || 'Time A');
+                      
                       // Calcular scores acumulados round por round
-                      // CT = team2 (rfs), T = team1 (t3less) - como no placar principal
+                      // Rastrear pontos por TIME, não por lado
                       const chartData = [];
-                      let teamCTScore = 0; // Score do time CT (rfs)
-                      let teamTScore = 0;  // Score do time T (t3less)
+                      let team1Score = 0; // Score do team1 (t3less)
+                      let team2Score = 0; // Score do team2 (rfs)
                       
                       for (let i = 0; i < detailedRounds.length; i++) {
                         const r = detailedRounds[i];
                         
-                        // Rounds 1-12: CT e T mantêm seus lados iniciais
-                        // Rounds 13+: CT e T trocam de lado
-                        if (r.round <= 12) {
-                          if (r.winner === 'CT') {
-                            teamCTScore++;
-                          } else if (r.winner === 'T') {
-                            teamTScore++;
-                          }
-                        } else {
+                        // Determinar qual time está em qual lado neste round
+                        // Rounds 1-12: lados iniciais
+                        // Rounds 13+: lados trocam
+                        // team1StartsAs = 'T', team2StartsAs = 'CT'
+                        let team1Side: 'CT' | 'T';
+                        let team2Side: 'CT' | 'T';
+                        
+                        if (r.round > 12) {
                           // Após troca de lado (round 13+)
-                          if (r.winner === 'CT') {
-                            teamTScore++; // CT agora é o time que começou em T (t3less)
-                          } else if (r.winner === 'T') {
-                            teamCTScore++; // T agora é o time que começou em CT (rfs)
-                          }
+                          // Inverter os lados: team1 vira CT, team2 vira T
+                          team1Side = 'CT';
+                          team2Side = 'T';
+                        } else {
+                          // Rounds 1-12: manter lados iniciais
+                          // team1 = T, team2 = CT
+                          team1Side = 'T';
+                          team2Side = 'CT';
+                        }
+                        
+                        // Atribuir ponto ao time correto baseado no lado que ganhou
+                        if (r.winner === team1Side) {
+                          team1Score++;
+                        } else if (r.winner === team2Side) {
+                          team2Score++;
                         }
                         
                         chartData.push({
                           round: r.round,
-                          teamCTScore: teamCTScore,
-                          teamTScore: teamTScore,
+                          team1Score: team1Score,
+                          team2Score: team2Score,
                         });
                       }
                       
-                      // Ajustar scores finais para garantir que batem com os scores do backend
-                      // Se houver diferença, distribuir proporcionalmente
-                      const calculatedCTFinal = teamCTScore;
-                      const calculatedTFinal = teamTScore;
+                      // Mapear nomes e cores corretamente
+                      // Time A (azul) = time que está em CT, Time B (laranja) = time que está em T
+                      // team1Score e team2Score são os scores dos times, não dos lados
+                      // Precisamos mapear para o time que está em CT (Time A, azul) e T (Time B, laranja)
+                      const nameForTimeA = team1InCT 
+                        ? (teamNames?.team1 || ctTeam?.teamName || 'Time A')
+                        : (teamNames?.team2 || ctTeam?.teamName || 'Time A');
+                      const nameForTimeB = team1InCT 
+                        ? (teamNames?.team2 || tTeam?.teamName || 'Time B')
+                        : (teamNames?.team1 || tTeam?.teamName || 'Time B');
                       
-                      if (chartData.length > 0 && (calculatedCTFinal !== ctTeamFinalScore || calculatedTFinal !== tTeamFinalScore)) {
-                        // Ajustar todos os valores proporcionalmente para que o final bata
-                        const ctRatio = ctTeamFinalScore / Math.max(calculatedCTFinal, 1);
-                        const tRatio = tTeamFinalScore / Math.max(calculatedTFinal, 1);
-                        
-                        chartData.forEach(d => {
-                          d.teamCTScore = Math.round(d.teamCTScore * ctRatio);
-                          d.teamTScore = Math.round(d.teamTScore * tRatio);
-                        });
-                      }
-                      
-                      // Mapear nomes: CT = team2 (rfs), T = team1 (t3less)
-                      const nameForTeamCT = nameFromCT || 'Time CT'; // rfs
-                      const nameForTeamT = nameFromT || 'Time T';   // t3less
+                      // Mapear scores: se team1 está em CT, então team1Score vai para Time A (azul)
+                      // Se team2 está em CT, então team2Score vai para Time A (azul)
+                      const scoreForTimeA = team1InCT ? team1Score : team2Score;
+                      const scoreForTimeB = team1InCT ? team2Score : team1Score;
                       
                       // Criar objeto com nomes corretos
                       const dataWithNames = chartData.map(d => {
                         const result: any = { round: d.round };
-                        result[nameForTeamCT] = d.teamCTScore; // rfs (azul)
-                        result[nameForTeamT] = d.teamTScore;   // t3less (laranja)
+                        const currentScoreA = team1InCT ? d.team1Score : d.team2Score;
+                        const currentScoreB = team1InCT ? d.team2Score : d.team1Score;
+                        result[nameForTimeA] = currentScoreA; // Time A (azul)
+                        result[nameForTimeB] = currentScoreB; // Time B (laranja)
                         return result;
                       });
                       
@@ -4976,8 +5063,11 @@ const CS2ProAnalyzerApp = () => {
                       <Line 
                         type="monotone" 
                         dataKey={(() => {
-                          // CT = team2 (rfs) - linha azul
-                          return teamNames?.team2 || teams.find(t => t.team === 'CT')?.teamName || 'Time CT';
+                          // Time A (azul) = time que está em CT
+                          const ctTeam = teams.find(t => t.team === 'CT');
+                          return team1InCT 
+                            ? (teamNames?.team1 || ctTeam?.teamName || 'Time A')
+                            : (teamNames?.team2 || ctTeam?.teamName || 'Time A');
                         })()}
                         stroke="#3B82F6" 
                         strokeWidth={2} 
@@ -4987,8 +5077,11 @@ const CS2ProAnalyzerApp = () => {
                       <Line 
                         type="monotone" 
                         dataKey={(() => {
-                          // T = team1 (t3less) - linha laranja
-                          return teamNames?.team1 || teams.find(t => t.team === 'T')?.teamName || 'Time T';
+                          // Time B (laranja) = time que está em T
+                          const tTeam = teams.find(t => t.team === 'T');
+                          return team1InCT 
+                            ? (teamNames?.team2 || tTeam?.teamName || 'Time B')
+                            : (teamNames?.team1 || tTeam?.teamName || 'Time B');
                         })()}
                         stroke="#F97316" 
                         strokeWidth={2} 
