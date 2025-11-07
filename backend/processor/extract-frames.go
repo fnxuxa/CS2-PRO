@@ -39,7 +39,7 @@ type Position struct {
 }
 
 type FrameEvent struct {
-	Type     string   `json:"type"` // "kill", "bomb_planted", "bomb_defused", "round_end"
+	Type     string   `json:"type"` // "kill", "bomb_planted", "bomb_defused", "bomb_exploded", "round_end"
 	Position Position `json:"position,omitempty"`
 	Player   string   `json:"player,omitempty"`
 }
@@ -200,6 +200,41 @@ func main() {
 		currentClock = "01:55"
 	})
 
+	// Registrar eventos de bomba no segundo parser também
+	p2.RegisterEventHandler(func(e events.BombPlanted) {
+		if e.Player != nil {
+			pos := e.Player.Position()
+			event := FrameEvent{
+				Type: "bomb_planted",
+				Position: Position{
+					X: pos.X,
+					Y: pos.Y,
+					Z: pos.Z,
+				},
+				Player: e.Player.Name,
+			}
+			tick := p2.GameState().IngameTick()
+			killEvents[tick] = append(killEvents[tick], event)
+		}
+	})
+
+	p2.RegisterEventHandler(func(e events.BombDefused) {
+		if e.Player != nil {
+			pos := e.Player.Position()
+			event := FrameEvent{
+				Type: "bomb_defused",
+				Position: Position{
+					X: pos.X,
+					Y: pos.Y,
+					Z: pos.Z,
+				},
+				Player: e.Player.Name,
+			}
+			tick := p2.GameState().IngameTick()
+			killEvents[tick] = append(killEvents[tick], event)
+		}
+	})
+
 	// Processar frame por frame e coletar dados
 	for {
 		moreFrames, err := p2.ParseNextFrame()
@@ -279,6 +314,14 @@ func main() {
 		frameData.Frames = append(frameData.Frames, frame)
 	}
 
+	// Log de debug: verificar quantos rounds foram processados
+	roundsSeen := make(map[int]bool)
+	for _, frame := range frameData.Frames {
+		roundsSeen[frame.Round] = true
+	}
+	fmt.Fprintf(os.Stderr, "[DEBUG] Total de frames processados: %d\n", len(frameData.Frames))
+	fmt.Fprintf(os.Stderr, "[DEBUG] Total de rounds únicos: %d\n", len(roundsSeen))
+	
 	// Output JSON
 	jsonData, err := json.MarshalIndent(frameData, "", "  ")
 	if err != nil {
